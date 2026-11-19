@@ -1,0 +1,163 @@
+name: Build, test and draft release
+
+on:
+  push:
+    branches: [main]
+    tags: ['**']
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.26.11'
+  GOTOOLCHAIN: local
+
+jobs:
+  prepare:
+    name: Validate source and version
+    if: github.event.deleted != true
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      matrix: ${{ steps.metadata.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - name: Resolve build version and platforms
+        id: metadata
+        run: python3 scripts/artifacts.py metadata
+      - name: Check Go formatting
+        run: |
+          unformatted="$(gofmt -l ./*.go)"
+          if [ -n "$unformatted" ]; then
+            printf 'Run gofmt on these files:\n%s\n' "$unformatted"
+            exit 1
+          fi
+      - name: Check frontend JavaScript
+        run: node --check web/app.js
+      - name: Test release tooling
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
+  build:
+    name: Test and build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      GOAMD64: v1
+      GOARM64: v8.0
+      CGO_ENABLED: '1'
+      CGO_CFLAGS: ${{ matrix.cflags }}
+      CGO_CXXFLAGS: ${{ matrix.cflags }}
+      CC: ${{ matrix.cc }}
+      LIBRARY: ${{ matrix.library }}
+      PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - name: Verify native toolchain
+        run: |
+          test "$(go env GOHOSTOS)" = "$GOOS"
+          test "$(go env GOHOSTARCH)" = "$GOARCH"
+          go version
+          "$CC" --version
+      - name: Run Go tests with race detection
+        run: go test -race -count=1 ./...
+      - name: Run Go vet
+        run: go vet ./...
+      - name: Build native plugin
+        run: |
+          mkdir -p build
+          go build -trimpath -buildvcs=false -buildmode=c-shared \
+            -ldflags="-s -w -X main.pluginVersion=$BUILD_VERSION" \
+            -o "build/$LIBRARY" .
+      - name: Load plugin and verify C ABI and version
+        run: '"$PYTHON" scripts/check_plugin.py "build/$LIBRARY" "$BUILD_VERSION"'
+      - name: Package plugin for the store
+        run: >-
+          "$PYTHON" scripts/artifacts.py package
+          --version "$BUILD_VERSION" --goos "$GOOS" --goarch "$GOARCH"
+          --library "build/$LIBRARY" --output dist
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: package-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          overwrite: true
+
+  artifacts:
+    name: Verify packages and generate checksums
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - name: Verify complete platform set and ZIP layout
+        run: python3 scripts/artifacts.py checksums --version "$BUILD_VERSION" --output dist
+      - name: Verify SHA-256 checksums
+        working-directory: dist
+        run: sha256sum --check checksums.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: mistral-bridge-${{ needs.prepare.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          overwrite: true
+
+  release:
+    name: Create release draft
+    if: github.ref_type == 'tag'
+    needs: [prepare, artifacts]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: mistral-bridge-${{ needs.prepare.outputs.version }}
+          path: dist
+      - name: Create or update draft and attach verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/draft_release.py

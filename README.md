@@ -40,6 +40,42 @@ The plugin stores its state under CPA's configured auth directory at `plugin-dat
 
 Request logs retain the most recent 10,000 requests with request/upstream model names, mapped reasoning effort, masked credential identity, result, time to first streaming output, duration, and token counts. Search, filters, time ranges, statistics and pagination run on the server. Cache hit rate uses requests with upstream cache data. Token speed divides successful streaming output tokens by generation time after the first token. Historical entries with missing fields display an em dash. The panel follows CPAMP’s light and dark theme selection.
 
+## Automated builds and release drafts
+
+Pushing to `main` runs formatting and JavaScript checks, release-tool tests, Go race tests, and `go vet`. The workflow then builds and loads the plugin through its C ABI on each of these native runners.
+
+| Platform | Architecture | Library |
+| --- | --- | --- |
+| Linux | amd64, arm64 | `mistral-bridge.so` |
+| macOS | amd64, arm64 | `mistral-bridge.dylib` |
+| Windows | amd64 | `mistral-bridge.dll` |
+
+The workflow pins Go 1.26.11. Linux packages use Ubuntu 22.04 and require glibc 2.35 or newer, including the Debian Bookworm CPA image. CPU targets use `GOAMD64=v1` or `GOARM64=v8.0` with matching C compiler flags. Each library must pass a load, ABI, registration, and embedded-version check before packaging.
+
+Download the `mistral-bridge-dev-<commit>` artifact from a successful main workflow run. It contains the five platform ZIPs and `checksums.txt` and is retained for 14 days.
+
+Push a dotted numeric version tag to run the same checks and create a GitHub Release draft. For example, use the following commands for the next available version.
+
+```sh
+git tag v0.2.1
+git push origin v0.2.1
+```
+
+The tag supplies the plugin metadata version and release asset names. For `v0.2.1`, the draft contains these assets.
+
+```text
+mistral-bridge_0.2.1_linux_amd64.zip
+mistral-bridge_0.2.1_linux_arm64.zip
+mistral-bridge_0.2.1_darwin_amd64.zip
+mistral-bridge_0.2.1_darwin_arm64.zip
+mistral-bridge_0.2.1_windows_amd64.zip
+checksums.txt
+```
+
+Each ZIP contains one dynamic library at its root. `checksums.txt` uses SHA-256 in `sha256sum` format. All five builds and package checks must pass before the release job runs. Rerunning a tag workflow updates an existing draft and its attachments. A previously published release causes the release job to stop.
+
+The workflow uses the repository's automatic `GITHUB_TOKEN`, with `contents: write` granted to the release job. Review the generated notes and publish the draft when ready. The plugin store discovers published releases through GitHub's latest-release API. Asset naming, ZIP layout, checksums, and numeric tags follow the [CLIProxyAPI Plugins Store requirements](https://github.com/router-for-me/CLIProxyAPI-Plugins-Store#release-requirements).
+
 ## Verify
 
 Run the focused protocol tests and build the plugin for the deployment target:

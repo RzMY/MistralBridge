@@ -1,1 +1,4 @@
 imgs/
+build/
+dist/
+__pycache__/

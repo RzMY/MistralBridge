@@ -25,6 +25,9 @@ const (
 	pluginName = "Mistral Bridge"
 )
 
+// Release builds set this to the tag version with -ldflags -X.
+var pluginVersion = "0.2.0"
+
 //go:embed web/index.html web/style.css web/app.js
 var webFiles embed.FS
 
@@ -161,7 +164,7 @@ func registration() ([]byte, error) {
 		"schema_version": 10,
 		"metadata": map[string]any{
 			"Name":             pluginName,
-			"Version":          "0.2.0",
+			"Version":          pluginVersion,
 			"Author":           "RzMY",
 			"GitHubRepository": "https://github.com/RzMY/MistralBridge",
 			"ConfigFields":     []any{},
