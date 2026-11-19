@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Mistral Bridge</title>
+<style>/* BRIDGE_STYLES */</style>
+</head>
+<body>
+<div id="authGate" class="auth-gate hidden"><section class="panel"><h1>Mistral Bridge</h1><p>从 CPAMP 面板打开可使用当前管理会话。</p><form id="authForm"><div class="field"><label for="managementKey">管理密钥</label><input id="managementKey" type="password" autocomplete="current-password" required></div><button class="btn btn-primary" type="submit">连接控制台</button><p id="authError" class="form-error" role="alert"></p></form></section></div>
+<div id="app" class="shell hidden">
+<header class="plugin-head"><div class="brand-mark">MB</div><h1 class="brand-name">Mistral Bridge</h1></header>
+<nav class="plugin-nav" role="tablist" aria-label="插件视图">
+<button id="tab-requests" type="button" role="tab" data-view="requests" aria-controls="page-requests" aria-selected="true"><span class="nav-icon" aria-hidden="true">▤</span>请求日志</button>
+<button id="tab-keys" type="button" role="tab" data-view="keys" aria-controls="page-keys" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">⚿</span>凭证管理</button>
+<button id="tab-models" type="button" role="tab" data-view="models" aria-controls="page-models" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">⇄</span>模型映射</button>
+</nav>
+<div id="pageError" class="notice hidden" role="alert"></div>
+<section id="page-requests" data-page="requests" role="tabpanel" aria-labelledby="tab-requests">
+<div class="panel">
+<div class="toolbar">
+<input class="search" id="logSearch" type="search" aria-label="搜索请求日志" placeholder="搜索模型、凭证或错误">
+<select id="logStatus" aria-label="筛选结果"><option value="">全部结果</option><option value="ok">成功</option><option value="error">失败</option></select>
+<select id="logModel" aria-label="筛选请求模型"><option value="">全部模型</option></select>
+<select id="logKey" aria-label="筛选凭证"><option value="">全部凭证</option></select>
+<select id="logThinking" aria-label="筛选思考强度"><option value="">全部思考强度</option><option>none</option><option>minimal</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option></select>
+<button class="btn" type="button" id="refreshLogs">↻ 刷新</button><span class="count" id="logCount">0 条</span>
+</div>
+<div class="range-row">
+<div class="segments" aria-label="时间范围"><button type="button" data-range="all" aria-pressed="true">全部</button><button type="button" data-range="today" aria-pressed="false">今天</button><button type="button" data-range="24h" aria-pressed="false">24 小时</button><button type="button" data-range="7d" aria-pressed="false">近 7 天</button><button type="button" data-range="30d" aria-pressed="false">近 30 天</button><button type="button" data-range="custom" aria-pressed="false">自定义</button></div>
+<div id="customRange" class="custom-range hidden"><label for="rangeFrom">从</label><input id="rangeFrom" type="datetime-local"><label for="rangeTo">至</label><input id="rangeTo" type="datetime-local"><button id="applyRange" class="btn small" type="button">应用</button></div>
+</div>
+<div class="stats">
+<div class="stat"><div class="stat-label">总请求数</div><div class="stat-value" id="statRequests">0</div></div>
+<div class="stat"><div class="stat-label">总 Token</div><div class="stat-value" id="statTokens">0</div><div class="stat-detail" id="statUsage">输入 0 · 输出 0 · 缓存 —</div></div>
+<div class="stat" title="上游已返回缓存用量的请求中，缓存 Token 占输入 Token 的比例"><div class="stat-label">缓存命中率</div><div class="stat-value" id="statCache">—</div><div class="stat-detail" id="cacheSamples"></div></div>
+<div class="stat" title="成功流式请求的输出 Token 总数 ÷ 首字后生成耗时总和"><div class="stat-label">平均 Token 速率</div><div class="stat-value" id="statSpeed">—</div><div class="stat-detail" id="speedSamples"></div></div>
+</div>
+</div>
+<div class="table-wrap"><table class="log-table"><thead><tr><th>时间</th><th>请求模型</th><th>上游模型</th><th>思考强度</th><th>结果</th><th>凭证</th><th>首字</th><th>耗时</th><th>用量</th></tr></thead><tbody id="logRows"></tbody></table></div>
+<div class="pager"><span class="retention" id="logRetention"></span><select id="pageSize" aria-label="每页条数"><option value="25">25 条 / 页</option><option value="50" selected>50 条 / 页</option><option value="100">100 条 / 页</option></select><button type="button" class="btn" id="prevPage">‹ 上一页</button><span id="pageInfo">第 1 页，共 1 页</span><button type="button" class="btn" id="nextPage">下一页 ›</button></div>
+</section>
+<section id="page-keys" data-page="keys" role="tabpanel" aria-labelledby="tab-keys" hidden>
+<div class="toolbar"><input class="search" id="keySearch" type="search" aria-label="搜索凭证" placeholder="搜索凭证名称、密钥尾号或地址"><span class="count" id="keyCount">0 个凭证</span><button class="btn" id="refreshQuotas" type="button">↻ 刷新额度</button><button class="btn btn-primary" id="addKey" type="button">＋ 添加凭证</button></div>
+<div class="key-list" id="keyList"></div><p class="hint">优先使用高优先级凭证，同优先级轮询。月度额度由同一组织的密钥共享。</p>
+</section>
+<section id="page-models" data-page="models" role="tabpanel" aria-labelledby="tab-models" hidden>
+<div id="publishNotice" class="notice hidden"><span id="publishText">模型变更待同步到 CPA</span><button class="btn small" id="retryPublish" type="button">重新同步</button></div>
+<div class="toolbar model-toolbar"><input class="search" id="modelSearch" type="search" aria-label="搜索模型映射" placeholder="搜索请求模型或上游模型"><select id="modelStatus" aria-label="筛选模型状态"><option value="">全部状态</option><option value="enabled">已发布</option><option value="disabled">已停用</option></select><span class="count" id="modelCount"></span><button class="btn" id="syncModels" type="button">↻ 拉取目录</button><button class="btn btn-primary" id="addModel" type="button">＋ 添加映射</button></div>
+<div class="toolbar"><span class="count" id="selectionCount">已选 0 项</span><button class="btn small" id="enableSelected" type="button" disabled>发布选中</button><button class="btn small" id="disableSelected" type="button" disabled>停用选中</button></div>
+<div class="table-wrap"><table class="model-table"><thead><tr><th><input id="selectModels" type="checkbox" aria-label="选择当前筛选的全部模型"></th><th>请求模型</th><th>上游模型</th><th>思考强度映射</th><th>凭证</th><th>状态</th><th></th></tr></thead><tbody id="modelRows"></tbody></table></div><p class="hint" id="catalogHint">拉取目录后，添加需要发布的映射。客户端使用“请求模型”名称。</p>
+</section>
+</div>
+<dialog id="keyDialog"><form id="keyForm"><div class="dialog-head"><h2 id="keyDialogTitle">添加凭证</h2><button type="button" class="x-button" data-close="keyDialog" aria-label="关闭">×</button></div><div class="dialog-body"><input id="keyId" type="hidden"><div class="field"><label for="keyLabel">名称</label><input id="keyLabel" maxlength="64" placeholder="例如 生产环境" required></div><div class="field"><label for="apiSecret">Mistral API Key</label><input id="apiSecret" type="password" autocomplete="new-password" required placeholder="粘贴 API Key"><small id="secretHint">保存后仅显示密钥尾号。</small></div><div class="field"><label for="baseUrl">API 地址</label><input id="baseUrl" type="url" value="https://api.mistral.ai/v1" required spellcheck="false"></div><div class="field"><label for="keyPriority">优先级</label><input id="keyPriority" type="number" min="-1000" max="1000" step="1" value="0" required><small>数值越大越优先，同优先级轮询。</small></div><p id="keyError" class="form-error" role="alert"></p></div><div class="dialog-actions"><button class="btn" type="button" data-close="keyDialog">取消</button><button class="btn btn-primary" type="submit">保存凭证</button></div></form></dialog>
+<dialog id="modelDialog"><form id="modelForm"><div class="dialog-head"><h2 id="modelDialogTitle">添加模型映射</h2><button type="button" class="x-button" data-close="modelDialog" aria-label="关闭">×</button></div><div class="dialog-body"><input id="mappingId" type="hidden"><div class="field"><label for="upstreamModel">上游模型</label><input id="upstreamModel" list="catalogOptions" required placeholder="选择目录中的模型或输入 ID"><datalist id="catalogOptions"></datalist></div><div class="field"><label for="clientModel">请求模型</label><input id="clientModel" required placeholder="客户端使用的名称，例如 mistral-large"><small>保存后会同步到 CPA 模型列表。</small></div><div class="field"><label for="thinkingMap">思考强度映射</label><input id="thinkingMap" placeholder="例如 high=medium, low=none"><small>留空时传递请求中的思考强度。</small></div><div class="field"><label for="mappingKey">凭证</label><select id="mappingKey"><option value="">按优先级自动选择</option></select></div><label><input id="mappingEnabled" type="checkbox" checked> 发布此模型</label><p id="modelError" class="form-error" role="alert"></p></div><div class="dialog-actions"><button class="btn" type="button" data-close="modelDialog">取消</button><button class="btn btn-primary" type="submit">保存映射</button></div></form></dialog>
+<div class="toast hidden" id="toast" role="status"></div>
+<script>/* BRIDGE_SCRIPT */</script>
+</body>
+</html>

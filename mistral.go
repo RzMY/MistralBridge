@@ -1,0 +1,529 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/url"
+	"strings"
+)
+
+const defaultBaseURL = "https://api.mistral.ai/v1"
+
+type rpcExecutorRequest struct {
+	Model          string         `json:"Model"`
+	Payload        []byte         `json:"Payload"`
+	Stream         bool           `json:"Stream"`
+	Headers        http.Header    `json:"Headers"`
+	Query          url.Values     `json:"Query"`
+	Metadata       map[string]any `json:"Metadata"`
+	HostCallbackID string         `json:"host_callback_id,omitempty"`
+	StreamID       string         `json:"stream_id,omitempty"`
+}
+
+type upstreamRequest struct {
+	Method         string      `json:"method"`
+	URL            string      `json:"url"`
+	Headers        http.Header `json:"headers"`
+	Body           []byte      `json:"body,omitempty"`
+	HostCallbackID string      `json:"host_callback_id,omitempty"`
+}
+
+type upstreamResponse struct {
+	StatusCode int         `json:"StatusCode"`
+	Headers    http.Header `json:"Headers"`
+	Body       []byte      `json:"Body"`
+}
+
+type upstreamStreamResponse struct {
+	StatusCode int         `json:"status_code"`
+	Headers    http.Header `json:"headers"`
+	StreamID   string      `json:"stream_id"`
+}
+
+type streamReadResponse struct {
+	Payload []byte `json:"payload"`
+	Error   string `json:"error"`
+	Done    bool   `json:"done"`
+}
+
+type statusError struct {
+	Status  int
+	Message string
+}
+
+func (e *statusError) Error() string { return e.Message }
+
+func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *requestTrace) ([]byte, http.Header, error) {
+	settings := currentState()
+	key, model, ok := resolveKeyAndModel(settings, req.Model)
+	if !ok {
+		return nil, nil, &statusError{Status: 404, Message: "Mistral model mapping was not found"}
+	}
+	trace.resolved(key, model, req.Payload)
+	body, err := transformRequest(req.Payload, model.UpstreamModel, model.ThinkingMap)
+	if err != nil {
+		return nil, nil, &statusError{Status: 400, Message: "Invalid chat completion request"}
+	}
+	if req.Stream {
+		body, err = setJSONField(body, "stream", true)
+		if err == nil {
+			body, err = ensureStreamUsage(body)
+		}
+	} else {
+		body, err = setJSONField(body, "stream", false)
+	}
+	if err != nil {
+		return nil, nil, &statusError{Status: 400, Message: "Invalid chat completion request"}
+	}
+	trace.resolved(key, model, body)
+	endpoint, err := completionURL(key.BaseURL)
+	if err != nil {
+		return nil, nil, &statusError{Status: 500, Message: "Invalid Mistral API endpoint"}
+	}
+	headers := http.Header{"Authorization": []string{"Bearer " + key.Secret}, "Content-Type": []string{"application/json"}, "Accept": []string{"application/json"}}
+	if req.Stream {
+		headers.Set("Accept", "text/event-stream")
+	}
+	callbackReq := upstreamRequest{Method: http.MethodPost, URL: endpoint, Headers: headers, Body: body, HostCallbackID: req.HostCallbackID}
+	responseRaw, err := hostCall("host.http.do", callbackReq)
+	if err != nil {
+		return nil, nil, &statusError{Status: 502, Message: "Mistral API request failed"}
+	}
+	var response upstreamResponse
+	if err = json.Unmarshal(responseRaw, &response); err != nil {
+		return nil, nil, &statusError{Status: 502, Message: "Invalid response from HTTP bridge"}
+	}
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		return nil, nil, upstreamStatusError(response.StatusCode, response.Body)
+	}
+	result, err := normalizeCompletion(response.Body)
+	return result, response.Headers, err
+}
+
+func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace *requestTrace) (http.Header, error) {
+	settings := currentState()
+	key, model, ok := resolveKeyAndModel(settings, req.Model)
+	if !ok {
+		return nil, &statusError{Status: 404, Message: "Mistral model mapping was not found"}
+	}
+	trace.resolved(key, model, req.Payload)
+	body, err := transformRequest(req.Payload, model.UpstreamModel, model.ThinkingMap)
+	if err == nil {
+		body, err = setJSONField(body, "stream", true)
+	}
+	if err == nil {
+		body, err = ensureStreamUsage(body)
+	}
+	if err != nil {
+		return nil, &statusError{Status: 400, Message: "Invalid chat completion request"}
+	}
+	trace.resolved(key, model, body)
+	endpoint, err := completionURL(key.BaseURL)
+	if err != nil {
+		return nil, &statusError{Status: 500, Message: "Invalid Mistral API endpoint"}
+	}
+	headers := http.Header{"Authorization": []string{"Bearer " + key.Secret}, "Content-Type": []string{"application/json"}, "Accept": []string{"text/event-stream"}}
+	streamRaw, err := hostCall("host.http.do_stream", map[string]any{
+		"method":           http.MethodPost,
+		"url":              endpoint,
+		"headers":          headers,
+		"body":             body,
+		"host_callback_id": req.HostCallbackID,
+	})
+	if err != nil {
+		return nil, &statusError{Status: 502, Message: "Mistral streaming request failed"}
+	}
+	var stream upstreamStreamResponse
+	if err = json.Unmarshal(streamRaw, &stream); err != nil {
+		return nil, &statusError{Status: 502, Message: "Invalid streaming response from HTTP bridge"}
+	}
+	if stream.StatusCode < 200 || stream.StatusCode > 299 {
+		if stream.StreamID != "" {
+			_, _ = hostCall("host.http.stream_close", map[string]any{"stream_id": stream.StreamID, "host_callback_id": req.HostCallbackID})
+		}
+		return nil, &statusError{Status: stream.StatusCode, Message: "Mistral API rejected the request"}
+	}
+	if stream.StreamID == "" {
+		return nil, &statusError{Status: 502, Message: "Mistral stream was not opened"}
+	}
+	go relayStream(req, stream, trace)
+	return http.Header{"content-type": []string{"text/event-stream"}}, nil
+}
+
+func relayStream(req rpcExecutorRequest, stream upstreamStreamResponse, trace *requestTrace) {
+	var streamErr error
+	var usage map[string]int
+	defer func() { trace.finish(usage, streamErr) }()
+	defer hostCall("host.http.stream_close", map[string]any{"stream_id": stream.StreamID, "host_callback_id": req.HostCallbackID})
+	defer hostCall("host.stream.close", map[string]any{"stream_id": req.StreamID})
+	var pending []byte
+	for {
+		readRaw, err := hostCall("host.http.stream_read", map[string]any{"stream_id": stream.StreamID, "host_callback_id": req.HostCallbackID})
+		if err != nil {
+			streamErr = &statusError{502, "Mistral 流式响应中断"}
+			hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "error": "Mistral stream read failed"})
+			return
+		}
+		var chunk streamReadResponse
+		if json.Unmarshal(readRaw, &chunk) != nil {
+			streamErr = &statusError{502, "Mistral 流式响应中断"}
+			hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "error": "Invalid Mistral stream chunk"})
+			return
+		}
+		if chunk.Error != "" {
+			streamErr = &statusError{502, "Mistral 流式响应中断"}
+			hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "error": "Mistral stream failed"})
+			return
+		}
+		pending = append(pending, chunk.Payload...)
+		for {
+			lineEnd := bytes.IndexByte(pending, '\n')
+			if lineEnd < 0 {
+				break
+			}
+			line := append([]byte(nil), pending[:lineEnd+1]...)
+			pending = pending[lineEnd+1:]
+			if lineUsage := parseSSEUsage(line); lineUsage != nil {
+				usage = lineUsage
+			}
+			processed, errLine := normalizeSSELine(line)
+			if errLine != nil {
+				streamErr = &statusError{502, "Mistral 流式响应中断"}
+				hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "error": "Invalid Mistral stream event"})
+				return
+			}
+			if len(processed) > 0 {
+				trace.observe(processed)
+				if _, errEmit := hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "payload": processed}); errEmit != nil {
+					streamErr = &statusError{499, "客户端已断开连接"}
+					return
+				}
+			}
+		}
+		if chunk.Done {
+			if len(pending) > 0 {
+				if lineUsage := parseSSEUsage(pending); lineUsage != nil {
+					usage = lineUsage
+				}
+				processed, errLine := normalizeSSELine(pending)
+				if errLine == nil && len(processed) > 0 {
+					trace.observe(processed)
+					if _, err := hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "payload": processed}); err != nil {
+						streamErr = &statusError{499, "客户端已断开连接"}
+					}
+				} else if errLine != nil {
+					streamErr = &statusError{502, "Mistral 流式响应中断"}
+				}
+			}
+			return
+		}
+	}
+}
+
+func normalizeSSELine(line []byte) ([]byte, error) {
+	trimmed := bytes.TrimSuffix(line, []byte("\n"))
+	trimmed = bytes.TrimSuffix(trimmed, []byte("\r"))
+	if !bytes.HasPrefix(trimmed, []byte("data:")) {
+		return line, nil
+	}
+	data := bytes.TrimSpace(trimmed[len("data:"):])
+	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+		return line, nil
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, err
+	}
+	if err := normalizeChoices(root, true); err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(root)
+	if err != nil {
+		return nil, err
+	}
+	return append(append([]byte("data: "), out...), '\n'), nil
+}
+
+func normalizeCompletion(body []byte) ([]byte, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, &statusError{Status: 502, Message: "Mistral returned invalid JSON"}
+	}
+	if err := normalizeChoices(root, false); err != nil {
+		return nil, &statusError{Status: 502, Message: "Mistral returned an unsupported content shape"}
+	}
+	return json.Marshal(root)
+}
+
+func normalizeChoices(root map[string]json.RawMessage, streaming bool) error {
+	var choices []map[string]json.RawMessage
+	if err := json.Unmarshal(root["choices"], &choices); err != nil {
+		return err
+	}
+	for _, choice := range choices {
+		field := "message"
+		if streaming {
+			field = "delta"
+		}
+		var message map[string]json.RawMessage
+		if json.Unmarshal(choice[field], &message) != nil || message == nil {
+			continue
+		}
+		content, exists := message["content"]
+		if !exists || len(bytes.TrimSpace(content)) == 0 || bytes.Equal(bytes.TrimSpace(content), []byte("null")) {
+			continue
+		}
+		var parts []map[string]json.RawMessage
+		if err := json.Unmarshal(content, &parts); err != nil {
+			continue
+		}
+		var thinking, text strings.Builder
+		for _, part := range parts {
+			var kind string
+			_ = json.Unmarshal(part["type"], &kind)
+			if kind == "thinking" {
+				var thoughtParts []struct {
+					Text string `json:"text"`
+				}
+				_ = json.Unmarshal(part["thinking"], &thoughtParts)
+				for _, item := range thoughtParts {
+					thinking.WriteString(item.Text)
+				}
+				continue
+			}
+			if kind == "text" {
+				var value string
+				_ = json.Unmarshal(part["text"], &value)
+				text.WriteString(value)
+			}
+		}
+		newContent, err := json.Marshal(text.String())
+		if err != nil {
+			return err
+		}
+		message["content"] = newContent
+		if thinking.Len() > 0 {
+			reasoning, _ := json.Marshal(thinking.String())
+			message["reasoning_content"] = reasoning
+		}
+		encoded, err := json.Marshal(message)
+		if err != nil {
+			return err
+		}
+		choice[field] = encoded
+	}
+	encoded, err := json.Marshal(choices)
+	if err != nil {
+		return err
+	}
+	root["choices"] = encoded
+	return nil
+}
+
+func transformRequest(raw []byte, model, thinkingMap string) ([]byte, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, err
+	}
+	modelJSON, _ := json.Marshal(model)
+	root["model"] = modelJSON
+	if effort, ok := rawString(root["reasoning_effort"]); ok {
+		if mapped := mapThinking(effort, thinkingMap); mapped != "" {
+			root["reasoning_effort"], _ = json.Marshal(mapped)
+		} else {
+			delete(root, "reasoning_effort")
+		}
+	}
+	var messages []map[string]json.RawMessage
+	if err := json.Unmarshal(root["messages"], &messages); err != nil {
+		return nil, errors.New("messages must be an array")
+	}
+	for _, message := range messages {
+		var role string
+		_ = json.Unmarshal(message["role"], &role)
+		var reasoning strings.Builder
+		for _, field := range []string{"reasoning_content", "reasoning", "reasoning_details"} {
+			if rawReasoning, exists := message[field]; exists {
+				reasoning.WriteString(extractReasoning(rawReasoning))
+				delete(message, field)
+			}
+		}
+		if role != "assistant" || strings.TrimSpace(reasoning.String()) == "" {
+			continue
+		}
+		parts := make([]json.RawMessage, 0, 2)
+		thinkingPart, _ := json.Marshal(map[string]any{"type": "thinking", "thinking": []map[string]string{{"type": "text", "text": reasoning.String()}}})
+		parts = append(parts, thinkingPart)
+		content := bytes.TrimSpace(message["content"])
+		if len(content) > 0 && content[0] == '[' {
+			var existing []json.RawMessage
+			if json.Unmarshal(content, &existing) == nil {
+				parts = append(parts, existing...)
+			}
+		} else {
+			var contentText string
+			if json.Unmarshal(content, &contentText) == nil && contentText != "" {
+				textPart, _ := json.Marshal(map[string]string{"type": "text", "text": contentText})
+				parts = append(parts, textPart)
+			}
+		}
+		message["content"], _ = json.Marshal(parts)
+	}
+	root["messages"], _ = json.Marshal(messages)
+	return json.Marshal(root)
+}
+
+func extractReasoning(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var items []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &items) == nil {
+		var result strings.Builder
+		for _, item := range items {
+			result.WriteString(item.Text)
+		}
+		return result.String()
+	}
+	var detail struct {
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(raw, &detail)
+	return detail.Text
+}
+
+func mapThinking(value, mapping string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if mapping == "" {
+		if value == "off" {
+			return "none"
+		}
+		return value
+	}
+	for _, pair := range strings.Split(mapping, ",") {
+		from, to, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if ok && strings.EqualFold(strings.TrimSpace(from), value) {
+			return strings.ToLower(strings.TrimSpace(to))
+		}
+	}
+	return value
+}
+
+func ensureStreamUsage(body []byte) ([]byte, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, err
+	}
+	var options map[string]json.RawMessage
+	if len(root["stream_options"]) > 0 {
+		_ = json.Unmarshal(root["stream_options"], &options)
+	}
+	if options == nil {
+		options = make(map[string]json.RawMessage)
+	}
+	options["include_usage"] = json.RawMessage("true")
+	root["stream_options"], _ = json.Marshal(options)
+	return json.Marshal(root)
+}
+
+func setJSONField(raw []byte, key string, value any) ([]byte, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, err
+	}
+	root[key], _ = json.Marshal(value)
+	return json.Marshal(root)
+}
+
+func rawString(raw json.RawMessage) (string, bool) {
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return "", false
+	}
+	return value, true
+}
+
+func completionURL(base string) (string, error) {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = defaultBaseURL
+	}
+	parsed, err := url.Parse(base)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil {
+		return "", errors.New("base URL must be an absolute HTTP(S) URL without credentials")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/chat/completions"
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+func upstreamStatusError(status int, body []byte) error {
+	message := "Mistral API rejected the request"
+	var parsed struct {
+		Message string `json:"message"`
+		Detail  string `json:"detail"`
+		Error   struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &parsed) == nil {
+		for _, text := range []string{parsed.Message, parsed.Detail, parsed.Error.Message} {
+			if strings.TrimSpace(text) != "" {
+				message = text
+				break
+			}
+		}
+	}
+	if status < 400 || status > 599 {
+		status = 502
+	}
+	return &statusError{Status: status, Message: message}
+}
+
+func parseUsage(raw []byte) map[string]int {
+	var root struct {
+		Usage map[string]json.RawMessage `json:"usage"`
+	}
+	if json.Unmarshal(raw, &root) != nil || root.Usage == nil {
+		return nil
+	}
+	usage := make(map[string]int)
+	for _, name := range []string{"prompt_tokens", "completion_tokens", "total_tokens"} {
+		var value int
+		if json.Unmarshal(root.Usage[name], &value) == nil {
+			usage[name] = max(0, value)
+		}
+	}
+	var details struct {
+		CachedTokens *int `json:"cached_tokens"`
+	}
+	_ = json.Unmarshal(root.Usage["prompt_tokens_details"], &details)
+	var legacy *int
+	_ = json.Unmarshal(root.Usage["num_cached_tokens"], &legacy)
+	if details.CachedTokens != nil {
+		usage["cached_tokens"] = max(0, *details.CachedTokens)
+	}
+	if legacy != nil {
+		usage["cached_tokens"] = max(usage["cached_tokens"], *legacy)
+	}
+	return usage
+}
+
+func parseSSEUsage(line []byte) map[string]int {
+	trimmed := bytes.TrimSpace(line)
+	if !bytes.HasPrefix(trimmed, []byte("data:")) {
+		return nil
+	}
+	data := bytes.TrimSpace(trimmed[len("data:"):])
+	if bytes.Equal(data, []byte("[DONE]")) {
+		return nil
+	}
+	return parseUsage(data)
+}
