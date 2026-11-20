@@ -26,11 +26,21 @@ Mistral Bridge is a native dynamic-library plugin for CLIProxyAPI (CPA). It adap
 - **Request logs** filter by model, result, credential, reasoning effort, and time range, with request counts, tokens, cache hit rate, and generation speed.
 - **Panel integration** reuses saved same-origin CPA / CPAMP management sessions and follows CPAMP's light and dark themes. Upstream requests, catalog fetches, and quota queries use CPA's HTTP transport and proxy settings.
 
+## Interface Preview
+
+![Request Logs](imgs/logs.png)
+![Credential Management](imgs/keys.png)
+![Model Mappings](imgs/models.png)
+
 ## Installation and setup
 
 CPA must support C ABI v1 and plugin schema version 10. The plugin has been verified with CPA `v8.0.78` and CPAMP.
 
-### Install the plugin
+### Online Installation
+
+Install Mistral Bridge from the CLIProxyAPI repository (official repository) in the CPA plugin marketplace.
+
+### Manual Installation
 
 1. Download the appropriate ZIP from Releases or the artifacts of a successful Actions run. Select the operating system and architecture of **the host or container running CPA**.
 2. Extract the library into the matching operating-system and architecture directory under CPA's plugin directory. For Linux amd64, use `plugins/linux/amd64/mistral-bridge.so`.

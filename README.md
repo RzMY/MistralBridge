@@ -26,11 +26,21 @@ Mistral Bridge 是 CLIProxyAPI（CPA）的原生动态库插件。它对齐 Mist
 - **请求日志**。按模型、结果、凭证、思考强度和时间范围筛选，汇总请求数、Token、缓存命中率及生成速率。
 - **面板集成**。复用 CPA / CPAMP 保存的同源管理会话，跟随 CPAMP 切换深色与浅色主题。上游请求、模型拉取及额度查询使用 CPA 的 HTTP 出口和代理配置。
 
+## 界面预览
+
+![请求日志](imgs/logs.png)
+![凭证管理](imgs/keys.png)
+![模型映射](imgs/models.png)
+
 ## 安装与配置
 
 需要支持 C ABI v1 和插件 schema version 10 的 CPA。已在 CPA `v8.0.78` 与 CPAMP 中验证。
 
-### 安装插件
+### 在线安装
+
+在 CPA 插件市场的 CLIProxyAPI源（官方源） 中安装 Mistral Bridge。
+
+### 手动安装
 
 1. 从 Releases 下载对应 ZIP，或从成功的 Actions 运行中下载构建产物。平台按 **CPA 所在主机或容器** 的系统和架构选择。
 2. 解压，将动态库放入 CPA 插件目录对应的系统和架构子目录。以 Linux amd64 为例，路径为 `plugins/linux/amd64/mistral-bridge.so`。
