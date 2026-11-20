@@ -40,6 +40,37 @@ func managementCall(t *testing.T, method, path, body string) managementResponse 
 	return result
 }
 
+func TestFreshInstallReportsEmptySynchronizedState(t *testing.T) {
+	isolatedState(t)
+	stateLoaded = false
+	if _, err := staticModels(nil); err != nil {
+		t.Fatal(err)
+	}
+	response := managementCall(t, "GET", "/state", "")
+	if response.StatusCode != http.StatusOK {
+		t.Fatal(string(response.Body))
+	}
+	var snapshot map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"keys", "models", "catalog"} {
+		if string(snapshot[field]) != "[]" {
+			t.Fatalf("fresh %s must be an empty array, got %s", field, snapshot[field])
+		}
+	}
+	if string(snapshot["models_revision"]) != string(snapshot["published_revision"]) {
+		t.Fatal("fresh installation incorrectly reports pending model synchronization")
+	}
+	path, err := statePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("opening the console should leave initial setup to the user")
+	}
+}
+
 func TestMappingRegistrationRenameAndCatalogSync(t *testing.T) {
 	isolatedState(t)
 	state.Keys = []apiKey{{ID: "key", Secret: "test", Enabled: true}}

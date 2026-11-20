@@ -235,12 +235,12 @@
   function renderModels() {
     const rows = visibleModels(), existing = new Set(snapshot.models.map(model => model.id));
     for (const id of selectedModels) if (!existing.has(id)) selectedModels.delete(id);
-    $("modelCount").textContent = `${snapshot.models.filter(model => model.enabled).length} 个已发布 · ${rows.length} 个映射`;
+    $("modelCount").textContent = `${snapshot.models.filter(model => model.enabled).length} 个已启用 · ${rows.length} 个映射`;
     $("modelRows").innerHTML = rows.length ? rows.map(model => {
       const key = snapshot.keys.find(item => item.id === model.key_id);
-      return `<tr><td><input type="checkbox" data-select-model="${escapeHTML(model.id)}" aria-label="选择 ${escapeHTML(model.client_model)}" ${selectedModels.has(model.id) ? "checked" : ""}></td><td class="mono model-cell">${escapeHTML(model.client_model)}</td><td class="mono model-cell">${escapeHTML(model.upstream_model)}</td><td class="mono">${escapeHTML(model.thinking_map || "自动传递")}</td><td>${escapeHTML(key?.label || "自动选择")}</td><td><button class="switch" role="switch" aria-label="发布 ${escapeHTML(model.client_model)}" aria-checked="${model.enabled}" data-toggle-model="${escapeHTML(model.id)}" type="button"><span class="switch-track"></span>${model.enabled ? "已发布" : "已停用"}</button></td><td><div class="actions"><button class="btn small" data-edit-model="${escapeHTML(model.id)}" type="button">编辑</button><button class="btn small btn-danger" data-delete-model="${escapeHTML(model.id)}" type="button">删除</button></div></td></tr>`;
+      return `<tr><td><input type="checkbox" data-select-model="${escapeHTML(model.id)}" aria-label="选择 ${escapeHTML(model.client_model)}" ${selectedModels.has(model.id) ? "checked" : ""}></td><td class="mono model-cell">${escapeHTML(model.client_model)}</td><td class="mono model-cell">${escapeHTML(model.upstream_model)}</td><td class="mono">${escapeHTML(model.thinking_map || "自动传递")}</td><td>${escapeHTML(key?.label || "自动选择")}</td><td><button class="switch" role="switch" aria-label="启用 ${escapeHTML(model.client_model)}" aria-checked="${model.enabled}" data-toggle-model="${escapeHTML(model.id)}" type="button"><span class="switch-track"></span>${model.enabled ? "已启用" : "未启用"}</button></td><td><div class="actions"><button class="btn small" data-edit-model="${escapeHTML(model.id)}" type="button">编辑</button><button class="btn small btn-danger" data-delete-model="${escapeHTML(model.id)}" type="button">删除</button></div></td></tr>`;
     }).join("") : '<tr><td colspan="7" class="empty"><strong>暂无匹配映射</strong>拉取上游目录后，添加需要使用的模型。</td></tr>';
-    $("catalogHint").textContent = `目录中有 ${snapshot.catalog.length} 个模型。拉取目录后，添加需要发布的映射，客户端使用“请求模型”名称。`;
+    $("catalogHint").textContent = `目录中有 ${snapshot.catalog.length} 个模型。拉取目录后，添加需要使用的映射，客户端使用“请求模型”名称。`;
     updateSelection();
   }
   function updateSelection() {
@@ -279,9 +279,14 @@
     $("upstreamModel").value = model?.upstream_model || ""; $("clientModel").value = model?.client_model || "";
     $("thinkingMap").value = model?.thinking_map || ""; $("mappingKey").value = model?.key_id || "";
     $("mappingEnabled").checked = model ? model.enabled : true;
+    updateMappingEnabledLabel();
     $("modelDialogTitle").textContent = model ? "编辑模型映射" : "添加模型映射";
     $("modelError").textContent = ""; $("modelDialog").showModal();
   }
+  function updateMappingEnabledLabel() {
+    $("mappingEnabledLabel").textContent = $("mappingEnabled").checked ? "已启用" : "未启用";
+  }
+  $("mappingEnabled").addEventListener("change", updateMappingEnabledLabel);
   $("authForm").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;

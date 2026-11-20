@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -31,11 +32,17 @@ var pluginVersion = "0.2.0"
 //go:embed web/index.html web/style.css web/app.js
 var webFiles embed.FS
 
+//go:embed logo.png
+var pluginLogo []byte
+
+var pluginLogoURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(pluginLogo)
+
 var consolePage = func() []byte {
 	page, _ := webFiles.ReadFile("web/index.html")
 	css, _ := webFiles.ReadFile("web/style.css")
 	script, _ := webFiles.ReadFile("web/app.js")
 	html := strings.Replace(string(page), "/* BRIDGE_STYLES */", string(css), 1)
+	html = strings.ReplaceAll(html, "BRIDGE_LOGO_URI", pluginLogoURI)
 	return []byte(strings.Replace(html, "/* BRIDGE_SCRIPT */", string(script), 1))
 }()
 
@@ -167,6 +174,7 @@ func registration() ([]byte, error) {
 			"Version":          pluginVersion,
 			"Author":           "RzMY",
 			"GitHubRepository": "https://github.com/RzMY/MistralBridge",
+			"Logo":             pluginLogoURI,
 			"ConfigFields":     []any{},
 		},
 		"capabilities": map[string]any{
@@ -766,8 +774,8 @@ func currentState() pluginState {
 	defer stateMu.RUnlock()
 	return pluginState{
 		Keys:    append([]apiKey(nil), state.Keys...),
-		Catalog: append([]string(nil), state.Catalog...),
-		Models:  append([]modelMapping(nil), state.Models...),
+		Catalog: append([]string{}, state.Catalog...),
+		Models:  append([]modelMapping{}, state.Models...),
 	}
 }
 
