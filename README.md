@@ -59,7 +59,7 @@ plugins:
 | --- | --- | --- |
 | Linux | amd64、arm64 | `mistral-bridge.so` |
 | macOS | amd64、arm64 | `mistral-bridge.dylib` |
-| Windows | amd64 | `mistral-bridge.dll` |
+| Windows | amd64、arm64 | `mistral-bridge.dll` |
 
 Linux 发布包以 Ubuntu 22.04 为构建基线，适用于 glibc 2.35 及以上环境，包括 Debian Bookworm 的 CPA 镜像。Docker 部署时，插件目录需要挂载到容器内，并与 `plugins.dir` 一致。
 
@@ -122,6 +122,8 @@ CGO_ENABLED=1 GOAMD64=v1 CGO_CFLAGS="-O2 -g -march=x86-64" \
 
 其他平台采用原生 runner 构建，CPU 基线为 amd64 v1 或 ARMv8.0。测试与打包命令在发布工作流中维护。[构建工作流](.github/workflows/build.yml)
 
+Windows ARM64 使用 `windows-11-arm` runner 和 MSYS2 CLANGARM64 的 Clang、原生 Python，构建 DLL 后执行 C ABI 加载验证。Go 不支持 Windows ARM64 的 race 检测，因此该平台运行普通 Go 测试，其余平台保留 race 检测。
+
 ```sh
 go test -race -count=1 ./...
 go vet ./...
@@ -131,9 +133,9 @@ python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 ## 自动构建与发布
 
-推送到 `main` 会执行测试、检查、五个平台的构建及动态库加载验证，并生成保留 14 天的 `mistral-bridge-dev-<commit>` Actions 产物。
+推送到 `main` 会执行测试、检查、六个平台的构建及动态库加载验证，并生成保留 14 天的 `mistral-bridge-dev-<commit>` Actions 产物。
 
-推送 `v0.2.1` 这样的数字版本 tag，会执行相同流程，并在全部通过后创建带发布说明的 **Release 草稿**。插件元数据使用 tag 中的版本号。草稿包含五个平台的 ZIP 和 SHA-256 `checksums.txt`，ZIP 名称采用 `mistral-bridge_<version>_<goos>_<goarch>.zip`，内部根目录放置对应动态库。
+推送 `v0.2.1` 这样的数字版本 tag，会执行相同流程，并在全部通过后创建带发布说明的 **Release 草稿**。插件元数据使用 tag 中的版本号。草稿包含六个平台的 ZIP 和 SHA-256 `checksums.txt`，ZIP 名称采用 `mistral-bridge_<version>_<goos>_<goarch>.zip`，内部根目录放置对应动态库。
 
 ```sh
 git tag v0.2.1

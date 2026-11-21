@@ -59,7 +59,7 @@ plugins:
 | --- | --- | --- |
 | Linux | amd64, arm64 | `mistral-bridge.so` |
 | macOS | amd64, arm64 | `mistral-bridge.dylib` |
-| Windows | amd64 | `mistral-bridge.dll` |
+| Windows | amd64, arm64 | `mistral-bridge.dll` |
 
 Linux release packages use Ubuntu 22.04 as their build baseline and support glibc 2.35 or newer, including the Debian Bookworm CPA image. For Docker, mount the plugin directory into the container at the location configured by `plugins.dir`.
 
@@ -122,6 +122,8 @@ CGO_ENABLED=1 GOAMD64=v1 CGO_CFLAGS="-O2 -g -march=x86-64" \
 
 Other platforms build on native runners. CPU baselines are amd64 v1 and ARMv8.0. The workflow contains the test and packaging commands. [Build workflow](.github/workflows/build.yml)
 
+Windows ARM64 uses the `windows-11-arm` runner with Clang and native Python from MSYS2 CLANGARM64, then loads the DLL to verify the C ABI. Go does not support race detection on Windows ARM64, so that platform runs regular Go tests while the other platforms retain race detection.
+
 ```sh
 go test -race -count=1 ./...
 go vet ./...
@@ -131,9 +133,9 @@ python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 ## Automated builds and releases
 
-A push to `main` runs checks, tests, builds for five platforms, and dynamic-library loading checks. The resulting `mistral-bridge-dev-<commit>` Actions artifact is retained for 14 days.
+A push to `main` runs checks, tests, builds for six platforms, and dynamic-library loading checks. The resulting `mistral-bridge-dev-<commit>` Actions artifact is retained for 14 days.
 
-Pushing a numeric version tag such as `v0.2.1` runs the same pipeline and creates a **Release draft** with generated notes after all checks pass. The tag sets the embedded plugin version. The draft includes five platform ZIPs and SHA-256 `checksums.txt`. Asset names follow `mistral-bridge_<version>_<goos>_<goarch>.zip`, with the corresponding dynamic library at the ZIP root.
+Pushing a numeric version tag such as `v0.2.1` runs the same pipeline and creates a **Release draft** with generated notes after all checks pass. The tag sets the embedded plugin version. The draft includes six platform ZIPs and SHA-256 `checksums.txt`. Asset names follow `mistral-bridge_<version>_<goos>_<goarch>.zip`, with the corresponding dynamic library at the ZIP root.
 
 ```sh
 git tag v0.2.1

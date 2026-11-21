@@ -16,6 +16,7 @@ PLATFORMS = (
     ("darwin", "amd64", "macos-15-intel", "clang", "python3"),
     ("darwin", "arm64", "macos-15", "clang", "python3"),
     ("windows", "amd64", "windows-2022", "gcc", "python"),
+    ("windows", "arm64", "windows-11-arm", "clang", "python"),
 )
 EXTENSIONS = {"linux": ".so", "darwin": ".dylib", "windows": ".dll"}
 

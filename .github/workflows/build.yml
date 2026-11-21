@@ -75,14 +75,39 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.mod
+      - name: Set up Windows ARM64 C compiler and Python
+        if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
+        id: msys2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: CLANGARM64
+          release: false
+          update: true
+          install: >-
+            mingw-w64-clang-aarch64-clang
+            mingw-w64-clang-aarch64-python
+      - name: Add Windows ARM64 tools to PATH
+        if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          Join-Path $env:MSYS2_LOCATION 'clangarm64\bin' |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Verify native toolchain
         run: |
           test "$(go env GOHOSTOS)" = "$GOOS"
           test "$(go env GOHOSTARCH)" = "$GOARCH"
           go version
           "$CC" --version
-      - name: Run Go tests with race detection
-        run: go test -race -count=1 ./...
+      - name: Run Go tests
+        run: |
+          if [ "$GOOS/$GOARCH" = "windows/arm64" ]; then
+            # Go's race detector does not support Windows ARM64.
+            go test -count=1 ./...
+          else
+            go test -race -count=1 ./...
+          fi
       - name: Run Go vet
         run: go vet ./...
       - name: Build native plugin

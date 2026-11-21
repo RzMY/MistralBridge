@@ -12,6 +12,27 @@ import draft_release
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_metadata_covers_the_required_six_platforms(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "github-output"
+            with patch.dict(os.environ, GITHUB_REF_TYPE="branch", GITHUB_REF_NAME="main",
+                            GITHUB_SHA="a" * 40, GITHUB_OUTPUT=str(output)):
+                artifacts.metadata()
+            values = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+            matrix = json.loads(values["matrix"])["include"]
+            platforms = {(entry["goos"], entry["goarch"]): entry for entry in matrix}
+            self.assertEqual(set(platforms), {
+                ("linux", "amd64"), ("linux", "arm64"),
+                ("darwin", "amd64"), ("darwin", "arm64"),
+                ("windows", "amd64"), ("windows", "arm64"),
+            })
+            self.assertEqual(len(matrix), 6)
+            windows_arm64 = platforms["windows", "arm64"]
+            self.assertEqual(windows_arm64["runner"], "windows-11-arm")
+            self.assertEqual(windows_arm64["cc"], "clang")
+            self.assertEqual(windows_arm64["library"], "mistral-bridge.dll")
+            self.assertEqual(windows_arm64["cflags"], "-O2 -g -march=armv8-a")
+
     def test_versions_for_main_and_numeric_tags(self):
         self.assertEqual(artifacts.build_version("branch", "main", "a" * 40), "dev-aaaaaaaaaaaa")
         self.assertEqual(artifacts.build_version("tag", "v1.2.3", "a" * 40), "1.2.3")
@@ -44,8 +65,8 @@ class ArtifactTests(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256((output / name).read_bytes()).hexdigest())
             (output / "checksums.txt").write_text(checksums, encoding="utf-8")
             self.assertEqual(artifacts.checksum_content("1.2.3", output), checksums)
-            archive.unlink()
-            with self.assertRaisesRegex(ValueError, "Missing"):
+            (output / "mistral-bridge_1.2.3_windows_arm64.zip").unlink()
+            with self.assertRaisesRegex(ValueError, "Missing:.*mistral-bridge_1.2.3_windows_arm64.zip"):
                 artifacts.checksum_content("1.2.3", output)
 
     def test_invalid_zip_layouts_are_rejected(self):
