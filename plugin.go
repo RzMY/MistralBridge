@@ -27,7 +27,7 @@ const (
 )
 
 // Release builds set this to the tag version with -ldflags -X.
-var pluginVersion = "0.1.1"
+var pluginVersion = "0.2.0"
 
 //go:embed web/index.html web/style.css web/app.js
 var webFiles embed.FS
@@ -67,32 +67,34 @@ type modelMapping struct {
 }
 
 type RequestLog struct {
-	ID            string    `json:"id"`
-	Model         string    `json:"model"`
-	UpstreamModel string    `json:"upstream_model,omitempty"`
-	Thinking      string    `json:"thinking,omitempty"`
-	KeyID         string    `json:"key_id,omitempty"`
-	KeyLabel      string    `json:"key_label,omitempty"`
-	KeyMasked     string    `json:"key_masked,omitempty"`
-	Stream        bool      `json:"stream,omitempty"`
-	FirstTokenMS  *int64    `json:"first_token_ms,omitempty"`
-	CachedTokens  *int      `json:"cached_tokens,omitempty"`
-	TotalTokens   int       `json:"total_tokens,omitempty"`
-	UsageKnown    bool      `json:"usage_known,omitempty"`
-	Error         string    `json:"error,omitempty"`
-	Status        string    `json:"status"`
-	HTTPStatus    int       `json:"http_status,omitempty"`
-	DurationMS    int64     `json:"duration_ms"`
-	InputTokens   int       `json:"input_tokens,omitempty"`
-	OutputTokens  int       `json:"output_tokens,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	Model          string    `json:"model"`
+	UpstreamModel  string    `json:"upstream_model,omitempty"`
+	Thinking       string    `json:"thinking,omitempty"`
+	KeyID          string    `json:"key_id,omitempty"`
+	KeyLabel       string    `json:"key_label,omitempty"`
+	KeyMasked      string    `json:"key_masked,omitempty"`
+	Stream         bool      `json:"stream,omitempty"`
+	FirstTokenMS   *int64    `json:"first_token_ms,omitempty"`
+	CachedTokens   *int      `json:"cached_tokens,omitempty"`
+	TotalTokens    int       `json:"total_tokens,omitempty"`
+	UsageKnown     bool      `json:"usage_known,omitempty"`
+	Error          string    `json:"error,omitempty"`
+	Status         string    `json:"status"`
+	HTTPStatus     int       `json:"http_status,omitempty"`
+	DebugAvailable bool      `json:"debug_available,omitempty"`
+	DurationMS     int64     `json:"duration_ms"`
+	InputTokens    int       `json:"input_tokens,omitempty"`
+	OutputTokens   int       `json:"output_tokens,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type pluginState struct {
-	Keys    []apiKey       `json:"keys"`
-	Catalog []string       `json:"catalog"`
-	Models  []modelMapping `json:"models"`
-	Logs    []RequestLog   `json:"-"`
+	Keys      []apiKey       `json:"keys"`
+	Catalog   []string       `json:"catalog"`
+	Models    []modelMapping `json:"models"`
+	DebugMode bool           `json:"debug_mode,omitempty"`
+	Logs      []RequestLog   `json:"-"`
 }
 
 type safeKey struct {
@@ -302,6 +304,9 @@ func managementRoutes() []map[string]string {
 		{"PATCH", "/plugins/mistral-bridge/keys"},
 		{"POST", "/plugins/mistral-bridge/keys/quota"},
 		{"GET", "/plugins/mistral-bridge/logs"},
+		{"GET", "/plugins/mistral-bridge/logs/debug"},
+		{"PATCH", "/plugins/mistral-bridge/debug"},
+		{"DELETE", "/plugins/mistral-bridge/debug"},
 		{"PATCH", "/plugins/mistral-bridge/models"},
 		{"PATCH", "/plugins/mistral-bridge/keys/toggle"},
 		{"DELETE", "/plugins/mistral-bridge/keys/delete"},
@@ -348,6 +353,15 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return refreshQuota(req.Body, req.HostCallbackID)
 	case method == http.MethodGet && path == "/logs":
 		return queryRequestLogs(req.Query)
+	case method == http.MethodGet && path == "/logs/debug":
+		return queryDebugLog(req.Query)
+	case method == http.MethodPatch && path == "/debug":
+		return updateDebugMode(req.Body)
+	case method == http.MethodDelete && path == "/debug":
+		if err := clearDebugLogs(); err != nil {
+			return managementJSONStatus(http.StatusInternalServerError, map[string]string{"error": "could not clear debug data"})
+		}
+		return managementJSON(map[string]bool{"ok": true})
 	case method == http.MethodPatch && path == "/models":
 		return updateMappings(req.Body)
 	case method == http.MethodPost && path == "/keys/test":
@@ -773,9 +787,10 @@ func currentState() pluginState {
 	stateMu.RLock()
 	defer stateMu.RUnlock()
 	return pluginState{
-		Keys:    append([]apiKey(nil), state.Keys...),
-		Catalog: append([]string{}, state.Catalog...),
-		Models:  append([]modelMapping{}, state.Models...),
+		Keys:      append([]apiKey(nil), state.Keys...),
+		Catalog:   append([]string{}, state.Catalog...),
+		Models:    append([]modelMapping{}, state.Models...),
+		DebugMode: state.DebugMode,
 	}
 }
 
@@ -788,7 +803,7 @@ func publicState() map[string]any {
 	stateMu.RLock()
 	published := publishedRevision
 	stateMu.RUnlock()
-	return map[string]any{"keys": keys, "catalog": snapshot.Catalog, "models": snapshot.Models, "models_revision": modelRevision(snapshot.Models), "published_revision": published}
+	return map[string]any{"keys": keys, "catalog": snapshot.Catalog, "models": snapshot.Models, "debug_mode": snapshot.DebugMode, "models_revision": modelRevision(snapshot.Models), "published_revision": published}
 }
 
 func publicKey(key apiKey) safeKey {
@@ -828,7 +843,9 @@ func randomID() string {
 }
 
 func appendRequestLog(entry RequestLog) error {
-	entry.ID = randomID()
+	if entry.ID == "" {
+		entry.ID = randomID()
+	}
 	line, err := json.Marshal(entry)
 	if err != nil {
 		return err
@@ -905,6 +922,9 @@ func compactRequestLogs(stateFile string) error {
 
 func clearRequestLogs() error {
 	loadState()
+	if err := clearDebugLogs(); err != nil {
+		return err
+	}
 	logMu.Lock()
 	defer logMu.Unlock()
 	stateMu.Lock()

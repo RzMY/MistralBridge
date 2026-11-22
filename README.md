@@ -18,12 +18,15 @@
 
 Mistral Bridge 是 CLIProxyAPI（CPA）的原生动态库插件。它对齐 Mistral 与 OpenAI Chat Completions 的请求、响应和思考字段，并提供凭证、模型映射和请求日志管理页面。协议转换参考 magpie 的公开实现。[CPA](https://github.com/router-for-me/CLIProxyAPI) · [magpie](https://github.com/yetone/magpie)
 
+开发和维护说明见[技术设计文档](docs/technical-design.md)。
+
 ## 功能
 
 - **协议适配**。转换 assistant 思考字段、Mistral thinking/text 内容及流式增量响应，支持工具调用消息中的思考内容。
 - **凭证管理**。添加、编辑和测试多个 Key，查看 API 或 Vibe 月度额度，设置启用状态与调度优先级。
 - **模型映射**。拉取上游目录，自定义客户端模型名和思考强度映射。启用、禁用或修改映射后同步到 CPA 模型列表。
 - **请求日志**。按模型、结果、凭证、思考强度和时间范围筛选，汇总请求数、Token、缓存命中率及生成速率。
+- **请求调试**。启用后保存发往 Mistral 的完整请求与响应，包括流式内容和错误正文。认证信息脱敏，独立保留最近 100 条，可从请求日志查看或清理。
 - **面板集成**。复用 CPA / CPAMP 保存的同源管理会话，跟随 CPAMP 切换深色与浅色主题。上游请求、模型拉取及额度查询使用 CPA 的 HTTP 出口和代理配置。
 
 ## 界面预览
@@ -98,6 +101,7 @@ Linux 发布包以 Ubuntu 22.04 为构建基线，适用于 glibc 2.35 及以上
 
 | 项目 | 行为 |
 | --- | --- |
+| 调试明细 | 默认关闭。启用后保存完整上游请求和响应，可能包含提示词与模型输出；认证头及已配置 Key 会脱敏。仅保留最近 100 条且总量最多 256 MiB，超过单条上限的明细不会保存。关闭模式不会自动删除已有明细。 |
 | 月度额度 | 根据 Key 类型读取 API 或 Vibe 预算，展示剩余量、用量比例、重置时间与刷新状态。同一组织的多个 Key 共享预算。 |
 | 额度不可用 | 显示接口返回的状态或错误；存在历史结果时保留结果与时间。自定义 API 地址显示额度查询不可用。 |
 | 请求明细 | 时间、请求模型、上游模型、思考强度、结果、掩码凭证、首字时间、总耗时与 Token 用量。 |
@@ -105,7 +109,7 @@ Linux 发布包以 Ubuntu 22.04 为构建基线，适用于 glibc 2.35 及以上
 | 缓存命中率 | 已返回缓存用量的请求中，缓存 Token 总量占输入 Token 总量的比例。 |
 | 平均 Token 速率 | 成功流式请求的输出 Token 总量，除以首字后的生成耗时总和。非流式请求的首字时间显示 `—`。 |
 
-状态保存在 `<auth-dir>/plugin-data/mistral-bridge/state.json`，请求元数据保存在同目录的 `requests.jsonl`。未取得 CPA `auth-dir` 时使用 `$HOME/.cli-proxy-api/plugin-data/mistral-bridge`，也可通过 `MISTRAL_BRIDGE_DATA_DIR` 指定目录。
+状态保存在 `<auth-dir>/plugin-data/mistral-bridge/state.json`，请求元数据保存在同目录的 `requests.jsonl`，调试明细位于 `debug-logs/`。未取得 CPA `auth-dir` 时使用 `$HOME/.cli-proxy-api/plugin-data/mistral-bridge`，也可通过 `MISTRAL_BRIDGE_DATA_DIR` 指定目录。
 
 `state.json` 包含上游 Key，页面仅展示掩码。容器部署请持久化插件目录和数据目录。要重新体验首次使用流程，可以停止 CPA 后备份并移走该插件的数据目录，再启动 CPA。
 

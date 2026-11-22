@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -12,14 +14,20 @@ import (
 const maxRequestLogs = 10000
 
 type requestTrace struct {
-	entry   RequestLog
-	started time.Time
-	secret  string
+	entry     RequestLog
+	started   time.Time
+	secret    string
+	debug     *debugExchange
+	debugBody bytes.Buffer
 }
 
 func newRequestTrace(req rpcExecutorRequest) *requestTrace {
 	now := time.Now()
-	return &requestTrace{started: now, entry: RequestLog{Model: req.Model, Stream: req.Stream, CreatedAt: now.UTC(), Status: "ok", HTTPStatus: 200}}
+	trace := &requestTrace{started: now, entry: RequestLog{ID: randomID(), Model: req.Model, Stream: req.Stream, CreatedAt: now.UTC(), Status: "ok", HTTPStatus: 200}}
+	if debugModeEnabled() {
+		trace.debug = &debugExchange{ID: trace.entry.ID, CreatedAt: now.UTC()}
+	}
+	return trace
 }
 
 func (t *requestTrace) resolved(key apiKey, model modelMapping, body []byte) {
@@ -28,11 +36,63 @@ func (t *requestTrace) resolved(key apiKey, model modelMapping, body []byte) {
 	t.entry.KeyLabel = key.Label
 	t.entry.KeyMasked = publicKey(key).Masked
 	t.secret = key.Secret
+	if t.debug != nil {
+		t.debug.secret = key.Secret
+	}
 	var request struct {
 		ReasoningEffort string `json:"reasoning_effort"`
 	}
 	_ = json.Unmarshal(body, &request)
 	t.entry.Thinking = request.ReasoningEffort
+}
+
+func (t *requestTrace) captureRequest(method, endpoint string, headers http.Header, body []byte) {
+	if t.debug == nil {
+		return
+	}
+	t.debug.Request = debugMessage{Method: method, URL: endpoint, Headers: headers.Clone(), Body: string(body)}
+}
+
+func (t *requestTrace) captureResponse(status int, headers http.Header, body []byte, complete bool) {
+	if t.debug == nil {
+		return
+	}
+	t.debug.Response.StatusCode = status
+	t.debug.Response.Headers = headers.Clone()
+	t.debugBody.Reset()
+	_, _ = t.debugBody.Write(body)
+	t.debug.Response.Complete = complete
+}
+
+func (t *requestTrace) captureResponseHead(status int, headers http.Header) {
+	if t.debug == nil {
+		return
+	}
+	t.debug.Response.StatusCode = status
+	t.debug.Response.Headers = headers.Clone()
+}
+
+func (t *requestTrace) captureResponseChunk(body []byte) {
+	if t.debug == nil || len(body) == 0 {
+		return
+	}
+	_, _ = t.debugBody.Write(body)
+}
+
+func (t *requestTrace) completeResponse() {
+	if t.debug != nil {
+		t.debug.Response.Complete = true
+	}
+}
+
+func (t *requestTrace) captureResponseError(err error) {
+	if t.debug != nil && err != nil {
+		t.debug.Response.Error = err.Error()
+	}
+}
+
+func (t *requestTrace) capturesDebug() bool {
+	return t.debug != nil
 }
 
 func (t *requestTrace) observe(line []byte) {
@@ -65,6 +125,17 @@ func (t *requestTrace) observe(line []byte) {
 
 func (t *requestTrace) finish(usage map[string]int, err error) {
 	t.entry.DurationMS = time.Since(t.started).Milliseconds()
+	if t.debug != nil {
+		t.debug.DurationMS = t.entry.DurationMS
+		t.debug.Response.Body = t.debugBody.String()
+		t.debug.secret = t.secret
+		if err != nil && t.debug.Response.Error == "" && t.debug.Response.StatusCode == 0 {
+			t.captureResponseError(err)
+		}
+		if saveDebugLog(t.debug, t.secret) == nil {
+			t.entry.DebugAvailable = true
+		}
+	}
 	if usage != nil {
 		t.entry.UsageKnown = true
 		t.entry.InputTokens = usage["prompt_tokens"]
@@ -178,6 +249,7 @@ func filterRequestLogs(logs []RequestLog, filter logFilter) map[string]any {
 		if filter.Search != "" && !strings.Contains(searchable, filter.Search) {
 			continue
 		}
+		row.DebugAvailable = row.DebugAvailable && debugLogExists(row.ID)
 		matches = append(matches, row)
 		stats.Requests++
 		stats.Input += int64(row.InputTokens)

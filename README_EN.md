@@ -18,12 +18,15 @@ Connect Mistral to CPA for OpenAI-compatible clients.
 
 Mistral Bridge is a native dynamic-library plugin for CLIProxyAPI (CPA). It adapts Mistral requests, responses, and reasoning fields to OpenAI Chat Completions and provides a web console for credentials, model mappings, and request logs. Its protocol handling draws on magpie's public implementation. [CPA](https://github.com/router-for-me/CLIProxyAPI) · [magpie](https://github.com/yetone/magpie)
 
+See the [technical design document (Chinese)](docs/technical-design.md) for implementation and maintenance details.
+
 ## Features
 
 - **Protocol adaptation** converts assistant reasoning fields, Mistral thinking/text content, and streaming deltas, including reasoning in tool-call messages.
 - **Credential management** adds, edits, and tests multiple keys, displays API or Vibe monthly budgets, and configures enabled state and scheduling priority.
 - **Model mappings** fetch the upstream catalog and configure client-facing names and reasoning-effort mappings. Changes to mappings and their enabled state update CPA's model list.
 - **Request logs** filter by model, result, credential, reasoning effort, and time range, with request counts, tokens, cache hit rate, and generation speed.
+- **Request debugging** stores complete upstream requests and responses when enabled, including streaming data and error bodies. Credentials are redacted. The latest 100 exchanges are retained separately and can be viewed or cleared from the request log.
 - **Panel integration** reuses saved same-origin CPA / CPAMP management sessions and follows CPAMP's light and dark themes. Upstream requests, catalog fetches, and quota queries use CPA's HTTP transport and proxy settings.
 
 ## Interface Preview
@@ -98,6 +101,7 @@ A reasoning-effort mapping can use `high=medium, low=none`. Leaving it empty for
 
 | Item | Behavior |
 | --- | --- |
+| Debug details | Off by default. When enabled, full upstream requests and responses are stored and may contain prompts and model output. Authentication headers and the configured key are redacted. Up to 100 records and 256 MiB are retained. A record exceeding the storage limit is skipped. Disabling debug mode does not clear existing records. |
 | Monthly quota | Reads the API or Vibe budget based on key type and displays remaining allowance, usage percentage, reset time, and refresh status. Keys in the same organization share the budget. |
 | Unavailable quota | Displays the upstream status or error. A previous result retains its timestamp. Custom API URLs display quota lookup as unavailable. |
 | Request details | Time, request model, upstream model, reasoning effort, result, masked credential, first-token time, total duration, and token usage. |
@@ -105,7 +109,7 @@ A reasoning-effort mapping can use `high=medium, low=none`. Leaving it empty for
 | Cache hit rate | Cached tokens divided by input tokens across requests that reported cache usage. |
 | Average token speed | Output tokens from successful streaming requests divided by their combined generation time after the first token. Non-streaming requests display `—` for first-token time. |
 
-State is stored at `<auth-dir>/plugin-data/mistral-bridge/state.json`, with request metadata in `requests.jsonl` in the same directory. When CPA's `auth-dir` is unavailable, the fallback is `$HOME/.cli-proxy-api/plugin-data/mistral-bridge`. Set `MISTRAL_BRIDGE_DATA_DIR` to use a different directory.
+State is stored at `<auth-dir>/plugin-data/mistral-bridge/state.json`, with request metadata in `requests.jsonl` and debug details in `debug-logs/`. When CPA's `auth-dir` is unavailable, the fallback is `$HOME/.cli-proxy-api/plugin-data/mistral-bridge`. Set `MISTRAL_BRIDGE_DATA_DIR` to use a different directory.
 
 `state.json` contains upstream keys. The console displays masked values. Persist the plugin and data directories when using containers. To repeat first-time setup, stop CPA, back up and move this plugin's data directory, then start CPA again.
 

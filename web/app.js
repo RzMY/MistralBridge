@@ -7,7 +7,7 @@
   const storageSalt = "cli-proxy-api-webui::secure-storage";
   let sessionKeySuppressed = false;
   let managementKey = readSessionKey() || readPanelKey();
-  let snapshot = { keys: [], catalog: [], models: [] };
+  let snapshot = { keys: [], catalog: [], models: [], debug_mode: false };
   let range = "all";
   let page = 1;
   let totalPages = 1;
@@ -15,6 +15,8 @@
   let toastTimer;
   let searchTimer;
   let publishing = false;
+  let debugExchange;
+  let debugPane = "request";
   const selectedModels = new Set();
   const refreshingKeys = new Set();
       function readSessionKey() {
@@ -115,6 +117,8 @@
   async function loadState() {
     snapshot = await api("/state");
     snapshot.keys ||= []; snapshot.models ||= []; snapshot.catalog ||= [];
+    snapshot.debug_mode = Boolean(snapshot.debug_mode);
+    $("debugModeToggle").setAttribute("aria-checked", String(snapshot.debug_mode));
     renderKeys(); renderModels();
     $("catalogOptions").innerHTML = snapshot.catalog.map(model => `<option value="${escapeHTML(model)}"></option>`).join("");
     const keyValue = $("mappingKey").value;
@@ -187,7 +191,49 @@
       <td>${escapeHTML(log.key_label || "—")}<div class="sub mono">${escapeHTML(log.key_masked || "")}</div></td>
       <td class="nowrap">${duration(log.first_token_ms)}</td><td class="nowrap">${duration(log.duration_ms)}</td>
       <td class="nowrap">${log.usage_known || log.input_tokens || log.output_tokens ? `${number(log.total_tokens || (log.input_tokens || 0) + (log.output_tokens || 0))}<div class="sub">输入 ${number(log.input_tokens)} · 输出 ${number(log.output_tokens)}</div><div class="sub">缓存 ${log.cached_tokens == null ? "—" : number(log.cached_tokens)}</div>` : "—"}</td>
-    </tr>`).join("") : '<tr><td colspan="9" class="empty"><strong>没有匹配的请求</strong>调整筛选条件或稍后刷新</td></tr>';
+      <td>${log.debug_available ? `<button class="btn small" type="button" data-debug-log="${escapeHTML(log.id)}">查看</button>` : "—"}</td>
+    </tr>`).join("") : '<tr><td colspan="10" class="empty"><strong>没有匹配的请求</strong>调整筛选条件或稍后刷新</td></tr>';
+  }
+  function formatDebugBody(body) {
+    if (!body) return "（空响应体）";
+    try { return JSON.stringify(JSON.parse(body), null, 2); }
+    catch { return body; }
+  }
+  function debugText() {
+    if (!debugExchange) return "";
+    if (debugPane === "request") {
+      const request = debugExchange.request || {};
+      const headers = Object.entries(request.headers || {}).map(([name, values]) => `${name}: ${values.join(", ")}`).join("\n");
+      return [`${request.method || ""} ${request.url || ""}`.trim(), headers, formatDebugBody(request.body)].filter(Boolean).join("\n\n");
+    }
+    const response = debugExchange.response || {};
+    const headers = Object.entries(response.headers || {}).map(([name, values]) => `${name}: ${values.join(", ")}`).join("\n");
+    const state = response.complete ? "响应完整" : "响应不完整";
+    const lines = [`HTTP ${response.status_code || "—"} · ${state}`, headers, formatDebugBody(response.body)];
+    if (response.error) lines.splice(2, 0, `读取错误：${response.error}`);
+    return lines.filter(Boolean).join("\n\n");
+  }
+  function renderDebugPane() {
+    document.querySelectorAll("[data-debug-pane]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.debugPane === debugPane)));
+    $("debugOutput").textContent = debugText();
+  }
+  async function openDebugLog(id) {
+    debugExchange = await api(`/logs/debug?id=${encodeURIComponent(id)}`);
+    debugPane = "request";
+    $("debugSummary").textContent = `${dateText(debugExchange.created_at)} · ${duration(debugExchange.duration_ms)} · ${debugExchange.id}`;
+    renderDebugPane();
+    $("debugDialog").showModal();
+  }
+  async function copyDebugText() {
+    const text = debugText();
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const input = document.createElement("textarea");
+      input.value = text; input.style.position = "fixed"; input.style.opacity = "0";
+      document.body.append(input); input.select(); document.execCommand("copy"); input.remove();
+    }
+    notify("调试内容已复制");
   }
   function renderKeys() {
     const query = $("keySearch").value.trim().toLowerCase();
@@ -321,6 +367,24 @@
   });
   $("addKey").addEventListener("click", () => openKey());
   $("addModel").addEventListener("click", () => openMapping());
+  $("debugModeToggle").addEventListener("click", event => {
+    const enabled = !snapshot.debug_mode;
+    if (enabled && !confirm("调试模式会保存完整的上游请求和响应，其中可能包含提示词及模型输出。认证信息会脱敏，最多保留最近 100 条或 256 MiB。继续启用？")) return;
+    busy(event.currentTarget, async () => {
+      await api("/debug", jsonOptions("PATCH", { enabled }));
+      await loadState(); await loadLogs();
+      notify(enabled ? "调试模式已启用" : "调试模式已关闭");
+    });
+  });
+  $("clearDebugLogs").addEventListener("click", event => {
+    if (!confirm("清除已保存的全部调试明细？普通请求日志会保留。")) return;
+    busy(event.currentTarget, async () => {
+      await api("/debug", { method: "DELETE" });
+      await loadLogs();
+      notify("调试明细已清除");
+    });
+  });
+  $("copyDebug").addEventListener("click", event => busy(event.currentTarget, copyDebugText));
   $("keySearch").addEventListener("input", renderKeys);
   $("modelSearch").addEventListener("input", renderModels);
   $("modelStatus").addEventListener("change", renderModels);
@@ -365,6 +429,8 @@
     const data = button.dataset;
     if (data.close) $(data.close).close();
     if (data.view) showView(data.view);
+    if (data.debugLog) busy(button, () => openDebugLog(data.debugLog));
+    if (data.debugPane) { debugPane = data.debugPane; renderDebugPane(); }
     if (data.range) {
       range = data.range;
       document.querySelectorAll("[data-range]").forEach(item => item.setAttribute("aria-pressed", String(item.dataset.range === range)));
