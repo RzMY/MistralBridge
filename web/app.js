@@ -399,12 +399,6 @@
     if ($("proxyForm").getAttribute("aria-busy") !== "true") saveProxy($("proxyUrl").value.trim());
   });
   $("resetProxy").addEventListener("click", () => saveProxy(""));
-  $("showProxy").addEventListener("click", event => {
-    const visible = $("proxyUrl").type === "password";
-    $("proxyUrl").type = visible ? "text" : "password";
-    event.currentTarget.textContent = visible ? "隐藏地址" : "显示地址";
-    event.currentTarget.setAttribute("aria-pressed", String(visible));
-  });
   $("authForm").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;

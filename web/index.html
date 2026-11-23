@@ -56,7 +56,7 @@
 <form id="proxyForm" class="panel proxy-panel">
 <div class="proxy-heading"><h2>独立代理</h2><span class="badge" id="proxyStatus">沿用 CPA 配置</span></div>
 <p class="hint">为 Mistral Bridge 单独设置代理。聊天请求、流式响应、凭证测试、模型目录和额度查询均使用此配置。</p>
-<div class="field"><label for="proxyUrl">代理地址</label><div class="proxy-input"><input id="proxyUrl" type="password" autocomplete="off" spellcheck="false" placeholder="例如 http://127.0.0.1:7890" aria-describedby="proxyHint"><button class="btn" id="showProxy" type="button" aria-pressed="false">显示地址</button></div><small id="proxyHint">支持 HTTP、HTTPS、SOCKS5、SOCKS5H，可包含用户名和密码。留空并保存后沿用 CPA 的代理配置。</small></div>
+<div class="field"><label for="proxyUrl">代理地址</label><input id="proxyUrl" type="text" autocomplete="off" spellcheck="false" placeholder="例如 http://127.0.0.1:7890" aria-describedby="proxyHint"><small id="proxyHint">支持 HTTP、HTTPS、SOCKS5、SOCKS5H，可包含用户名和密码。留空并保存后沿用 CPA 的代理配置。</small></div>
 <p id="proxyError" class="form-error" role="alert"></p>
 <div class="proxy-actions"><button class="btn" id="resetProxy" type="button">沿用 CPA 配置</button><button class="btn btn-primary" type="submit">保存代理</button></div>
 </form>

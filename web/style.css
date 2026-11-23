@@ -107,8 +107,6 @@ dialog::backdrop { background:#10141a88; }
 .proxy-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .proxy-heading h2 { margin:0; font-size:16px; }
 .proxy-panel .hint { margin:0; }
-.proxy-input { display:flex; align-items:center; gap:8px; }
-.proxy-input input { flex:1; width:100%; }
 .proxy-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; padding-top:16px; border-top:1px solid var(--line); }
 .dialog-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:15px 22px; border-top:1px solid var(--line); }
 .debug-dialog { width:min(1100px,calc(100vw - 28px)); max-height:94vh; }
