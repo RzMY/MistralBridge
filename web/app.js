@@ -275,10 +275,12 @@
     const available = quota?.available;
     const active = activeKeyChannel(key) === channel;
     const remaining = available ? `${quota.remaining.toFixed(2)} ${escapeHTML(quota.currency || "")}` : "—";
-    return `<div class="quota-pool ${active ? "active" : ""}"><div class="quota-title"><span>${channel === "vibe" ? "Vibe" : "Studio / API"} 月度额度</span>${active ? '<span class="badge success">当前渠道</span>' : '<span class="muted">剩余</span>'}</div><div class="quota-value">${remaining}</div><div class="quota-track"><div class="quota-fill ${quota?.used_percent >= 90 ? "low" : ""}" style="width:${available ? Math.max(0, Math.min(100, 100 - quota.used_percent)) : 0}%"></div></div><div class="sub">${available ? `已用 ${quota.used.toFixed(2)} / ${quota.limit.toFixed(2)} ${escapeHTML(quota.currency || "")} · ${quota.used_percent.toFixed(1)}%` : escapeHTML(quota?.error || "尚未获取额度")}</div>${available && quota.error ? `<div class="sub error-text">${escapeHTML(quota.error)}，显示上次结果</div>` : ""}<div class="sub">${escapeHTML(quota?.plan || "套餐待查询")} · 重置 ${escapeHTML(dateText(quota?.reset_at))}</div>${available ? `<div class="sub">${quota.pay_as_you_go ? "已开启超额按量付费" : "按套餐额度使用"}</div>` : ""}<div class="sub">${quota?.updated_at ? `更新于 ${escapeHTML(dateText(quota.updated_at))}` : "额度来自 Mistral"}</div></div>`;
+    return `<div class="quota-pool ${active ? "active" : ""}" role="button" tabindex="0" aria-label="${escapeHTML(key.label)}：切换至 ${channel === "vibe" ? "Vibe" : "Studio / API"} 渠道" aria-pressed="${active}" aria-disabled="${switchingKeys.has(key.id)}" data-channel-key="${escapeHTML(key.id)}" data-channel="${channel}" title="点击切换至 ${channel === "vibe" ? "Vibe" : "Studio / API"} 渠道"><div class="quota-title"><span>${channel === "vibe" ? "Vibe" : "Studio / API"} 月度额度</span>${active ? '<span class="badge success">当前渠道</span>' : '<span class="muted">剩余</span>'}</div><div class="quota-value">${remaining}</div><div class="quota-track"><div class="quota-fill ${quota?.used_percent >= 90 ? "low" : ""}" style="width:${available ? Math.max(0, Math.min(100, 100 - quota.used_percent)) : 0}%"></div></div><div class="sub">${available ? `已用 ${quota.used.toFixed(2)} / ${quota.limit.toFixed(2)} ${escapeHTML(quota.currency || "")} · ${quota.used_percent.toFixed(1)}%` : escapeHTML(quota?.error || "尚未获取额度")}</div>${available && quota.error ? `<div class="sub error-text">${escapeHTML(quota.error)}，显示上次结果</div>` : ""}<div class="sub">${escapeHTML(quota?.plan || "套餐待查询")} · 重置 ${escapeHTML(dateText(quota?.reset_at))}</div>${available ? `<div class="sub">${quota.pay_as_you_go ? "已开启超额按量付费" : "按套餐额度使用"}</div>` : ""}<div class="sub">${quota?.updated_at ? `更新于 ${escapeHTML(dateText(quota.updated_at))}` : "额度来自 Mistral"}</div></div>`;
   }
   async function switchKeyChannel(id, channel) {
-    if (switchingKeys.has(id)) return;
+    if (switchingKeys.has(id) || snapshot.keys.find(key => key.id === id)?.channel === channel) return;
+    const focused = document.activeElement;
+    const restoreFocus = focused?.classList.contains("quota-pool") && focused.dataset.channelKey === id && focused.dataset.channel === channel;
     switchingKeys.add(id); renderKeys();
     try {
       const updated = await api("/keys/channel", jsonOptions("PATCH", { id, channel }));
@@ -286,7 +288,10 @@
       if (index >= 0) snapshot.keys[index] = updated;
       notify(channel === "auto" ? "已恢复按 Key 来源选择渠道，新请求生效" : `已切换至 ${channel === "vibe" ? "Vibe" : "Studio / API"} 请求渠道，新请求生效`);
     } catch (error) { notify(error.message, true); }
-    finally { switchingKeys.delete(id); renderKeys(); }
+    finally {
+      switchingKeys.delete(id); renderKeys();
+      if (restoreFocus) [...$("keyList").querySelectorAll(".quota-pool")].find(card => card.dataset.channelKey === id && card.dataset.channel === channel)?.focus();
+    }
   }
   function renderKeys() {
     const query = $("keySearch").value.trim().toLowerCase();
@@ -489,9 +494,15 @@
     const checkbox = event.target.closest("[data-select-model]");
     if (checkbox) { checkbox.checked ? selectedModels.add(checkbox.dataset.selectModel) : selectedModels.delete(checkbox.dataset.selectModel); updateSelection(); }
   });
+  $("keyList").addEventListener("keydown", event => {
+    const card = event.target.closest(".quota-pool[data-channel-key]");
+    if (!card || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    if (card.getAttribute("aria-disabled") !== "true") switchKeyChannel(card.dataset.channelKey, card.dataset.channel);
+  });
   document.body.addEventListener("click", event => {
-    const button = event.target.closest("button");
-    if (!button) return;
+    const button = event.target.closest("button, .quota-pool[data-channel-key]");
+    if (!button || button.disabled || button.getAttribute("aria-disabled") === "true") return;
     const data = button.dataset;
     if (data.close) $(data.close).close();
     if (data.view) showView(data.view);

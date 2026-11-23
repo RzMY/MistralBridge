@@ -72,7 +72,10 @@ tbody tr:hover { background:color-mix(in srgb,var(--soft) 55%,transparent); }
 .key-list { display:grid; gap:14px; margin-top:16px; }
 .key-card { border:1px solid var(--line); border-radius:10px; padding:20px; background:var(--surface); }
 .key-main { display:grid; grid-template-columns:minmax(190px,.9fr) repeat(2,minmax(220px,1fr)); gap:20px; }
-.quota-pool { border:1px solid var(--line); border-radius:8px; padding:14px; min-width:0; }
+.quota-pool { border:1px solid var(--line); border-radius:8px; padding:14px; min-width:0; cursor:pointer; transition:border-color .15s,box-shadow .15s; }
+.quota-pool:hover:not([aria-disabled="true"]) { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+.quota-pool:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.quota-pool[aria-disabled="true"] { cursor:wait; opacity:.65; }
 .quota-pool.active { border-color:var(--accent); background:var(--accent-soft); }
 .key-channel { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:16px; }
 .key-name { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-weight:700; font-size:14px; }
