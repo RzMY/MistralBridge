@@ -47,14 +47,17 @@ var consolePage = func() []byte {
 }()
 
 type apiKey struct {
-	ID        string    `json:"id"`
-	Label     string    `json:"label"`
-	Secret    string    `json:"secret"`
-	BaseURL   string    `json:"base_url,omitempty"`
-	Enabled   bool      `json:"enabled"`
-	Priority  int       `json:"priority"`
-	Quota     *keyQuota `json:"quota,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string     `json:"id"`
+	Label     string     `json:"label"`
+	Secret    string     `json:"secret"`
+	BaseURL   string     `json:"base_url,omitempty"`
+	Enabled   bool       `json:"enabled"`
+	Priority  int        `json:"priority"`
+	Channel   string     `json:"channel,omitempty"`
+	Source    string     `json:"source,omitempty"`
+	Quotas    *keyQuotas `json:"quotas,omitempty"`
+	Quota     *keyQuota  `json:"quota,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 type modelMapping struct {
@@ -99,14 +102,18 @@ type pluginState struct {
 }
 
 type safeKey struct {
-	ID        string    `json:"id"`
-	Label     string    `json:"label"`
-	Masked    string    `json:"masked"`
-	BaseURL   string    `json:"base_url"`
-	Enabled   bool      `json:"enabled"`
-	Priority  int       `json:"priority"`
-	Quota     *keyQuota `json:"quota,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            string     `json:"id"`
+	Label         string     `json:"label"`
+	Masked        string     `json:"masked"`
+	BaseURL       string     `json:"base_url"`
+	Enabled       bool       `json:"enabled"`
+	Priority      int        `json:"priority"`
+	Channel       string     `json:"channel"`
+	Source        string     `json:"source,omitempty"`
+	ActiveChannel string     `json:"active_channel,omitempty"`
+	Quotas        *keyQuotas `json:"quotas,omitempty"`
+	Quota         *keyQuota  `json:"quota,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 type managementRequest struct {
@@ -305,6 +312,7 @@ func managementRoutes() []map[string]string {
 		{"POST", "/plugins/mistral-bridge/keys"},
 		{"PATCH", "/plugins/mistral-bridge/keys"},
 		{"POST", "/plugins/mistral-bridge/keys/quota"},
+		{"PATCH", "/plugins/mistral-bridge/keys/channel"},
 		{"GET", "/plugins/mistral-bridge/logs"},
 		{"GET", "/plugins/mistral-bridge/logs/debug"},
 		{"PATCH", "/plugins/mistral-bridge/debug"},
@@ -353,6 +361,8 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return saveKey(req.Body, false)
 	case method == http.MethodPatch && path == "/keys":
 		return saveKey(req.Body, true)
+	case method == http.MethodPatch && path == "/keys/channel":
+		return switchKeyChannel(req.Body)
 	case method == http.MethodPost && path == "/keys/quota":
 		return refreshQuota(req.Body, req.HostCallbackID)
 	case method == http.MethodGet && path == "/logs":
@@ -452,6 +462,12 @@ func saveKey(body []byte, editing bool) ([]byte, error) {
 	input.Secret = strings.TrimSpace(input.Secret)
 	input.Label = strings.TrimSpace(input.Label)
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
+	input.Channel = strings.ToLower(strings.TrimSpace(input.Channel))
+	if input.Channel != "" && input.Channel != "auto" && input.Channel != "vibe" && input.Channel != "studio" {
+		return managementJSONStatus(400, map[string]string{"error": "渠道必须为 auto、vibe 或 studio"})
+	}
+	// Source and budget data are supplied only by Mistral, never by the client.
+	input.Source, input.Quota, input.Quotas = "", nil, nil
 	if input.BaseURL == "" {
 		input.BaseURL = defaultBaseURL
 	}
@@ -479,12 +495,19 @@ func saveKey(body []byte, editing bool) ([]byte, error) {
 				return &statusError{404, "凭证不存在"}
 			}
 			old := s.Keys[index]
+			migrateKeyQuota(&old)
+			if input.Channel == "" {
+				input.Channel = old.Channel
+			}
 			if input.Secret == "" {
 				input.Secret = old.Secret
 			}
 			input.CreatedAt = old.CreatedAt
 			if input.Secret == old.Secret && input.BaseURL == old.BaseURL {
 				input.Quota = old.Quota
+				input.Quotas = old.Quotas
+				input.Source = keySource(old)
+				input.Quota = selectedQuota(input)
 			}
 			s.Keys[index] = input
 		} else {
@@ -503,6 +526,32 @@ func saveKey(body []byte, editing bool) ([]byte, error) {
 		return mutationError(err)
 	}
 	return managementJSON(publicKey(input))
+}
+
+func switchKeyChannel(body []byte) ([]byte, error) {
+	var input struct {
+		ID      string `json:"id"`
+		Channel string `json:"channel"`
+	}
+	if json.Unmarshal(body, &input) != nil || input.ID == "" || (input.Channel != "auto" && input.Channel != "vibe" && input.Channel != "studio") {
+		return managementJSONStatus(400, map[string]string{"error": "请选择有效的凭证和渠道"})
+	}
+	var key apiKey
+	if err := mutateState(func(s *pluginState) error {
+		for i := range s.Keys {
+			if s.Keys[i].ID == input.ID {
+				migrateKeyQuota(&s.Keys[i])
+				s.Keys[i].Channel = input.Channel
+				s.Keys[i].Quota = selectedQuota(s.Keys[i])
+				key = s.Keys[i]
+				return nil
+			}
+		}
+		return &statusError{404, "凭证不存在"}
+	}); err != nil {
+		return mutationError(err)
+	}
+	return managementJSON(publicKey(key))
 }
 
 func deleteKey(id string) ([]byte, error) {
@@ -815,7 +864,11 @@ func publicKey(key apiKey) safeKey {
 	if len(last) > 4 {
 		last = last[len(last)-4:]
 	}
-	return safeKey{ID: key.ID, Label: key.Label, Masked: "••••" + last, BaseURL: key.BaseURL, Enabled: key.Enabled, Priority: key.Priority, Quota: key.Quota, CreatedAt: key.CreatedAt}
+	channel := key.Channel
+	if channel == "" {
+		channel = "auto"
+	}
+	return safeKey{ID: key.ID, Label: key.Label, Masked: "••••" + last, BaseURL: key.BaseURL, Enabled: key.Enabled, Priority: key.Priority, Channel: channel, Source: keySource(key), ActiveChannel: activeChannel(key), Quotas: key.Quotas, Quota: selectedQuota(key), CreatedAt: key.CreatedAt}
 }
 
 func managementJSON(value any) ([]byte, error) {

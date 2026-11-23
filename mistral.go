@@ -69,6 +69,9 @@ func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *reque
 	}
 	trace.resolved(key, model, req.Payload)
 	body, err := transformRequest(req.Payload, model.UpstreamModel, model.ThinkingMap)
+	if err == nil {
+		body, err = applyKeyChannel(body, key)
+	}
 	if err != nil {
 		return nil, nil, &statusError{Status: 400, Message: "Invalid chat completion request"}
 	}
@@ -120,6 +123,9 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 	}
 	trace.resolved(key, model, req.Payload)
 	body, err := transformRequest(req.Payload, model.UpstreamModel, model.ThinkingMap)
+	if err == nil {
+		body, err = applyKeyChannel(body, key)
+	}
 	if err == nil {
 		body, err = setJSONField(body, "stream", true)
 	}
@@ -387,6 +393,40 @@ func normalizeChoices(root map[string]json.RawMessage, streaming bool) error {
 	}
 	root["choices"] = encoded
 	return nil
+}
+
+// Mistral meters metadata.call_source=vibe_code against the Vibe allowance.
+// Studio uses the upstream API route by omitting this marker, not by changing
+// its value: Mistral may classify any nonempty call_source as Vibe traffic.
+func applyKeyChannel(raw []byte, key apiKey) ([]byte, error) {
+	channel := activeChannel(key)
+	if channel == "" {
+		return raw, nil
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, err
+	}
+	metadata := map[string]json.RawMessage{}
+	if value := root["metadata"]; len(value) > 0 {
+		if err := json.Unmarshal(value, &metadata); err != nil {
+			return nil, errors.New("metadata must be an object")
+		}
+		if metadata == nil {
+			metadata = map[string]json.RawMessage{}
+		}
+	}
+	if channel == "vibe" {
+		metadata["call_source"] = json.RawMessage(`"vibe_code"`)
+	} else {
+		delete(metadata, "call_source")
+	}
+	if len(metadata) == 0 {
+		delete(root, "metadata")
+	} else {
+		root["metadata"], _ = json.Marshal(metadata)
+	}
+	return json.Marshal(root)
 }
 
 func transformRequest(raw []byte, model, thinkingMap string) ([]byte, error) {

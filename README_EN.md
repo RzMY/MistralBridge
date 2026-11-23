@@ -16,14 +16,12 @@ Connect Mistral to CPA for OpenAI-compatible clients.
 
 </div>
 
-Mistral Bridge is a native dynamic-library plugin for CLIProxyAPI (CPA). It adapts Mistral requests, responses, and reasoning fields to OpenAI Chat Completions and provides a web console for credentials, model mappings, and request logs. Its protocol handling draws on magpie's public implementation. [CPA](https://github.com/router-for-me/CLIProxyAPI) · [magpie](https://github.com/yetone/magpie)
-
-See the [technical design document (Chinese)](docs/technical-design.md) for implementation and maintenance details.
+Mistral Bridge is a native dynamic-library plugin for CLIProxyAPI (CPA). It adapts Mistral requests, responses, and reasoning fields to OpenAI Chat Completions and provides a web console for credentials, model mappings, and request logs. See the [technical design document (Chinese)](docs/technical-design.md) for implementation and maintenance details.
 
 ## Features
 
 - **Protocol adaptation** converts assistant reasoning fields, Mistral thinking/text content, and streaming deltas, including reasoning in tool-call messages.
-- **Credential management** adds, edits, and tests multiple keys, displays API or Vibe monthly budgets, and configures enabled state and scheduling priority.
+- **Credential management** adds, edits, and tests multiple keys, switches Vibe / Studio request channels, displays both monthly budgets, and configures enabled state and scheduling priority.
 - **Model mappings** fetch the upstream catalog and configure client-facing names and reasoning-effort mappings. Changes to mappings and their enabled state update CPA's model list.
 - **Request logs** filter by model, result, credential, reasoning effort, and time range, with request counts, tokens, cache hit rate, and generation speed.
 - **Request debugging** stores complete upstream requests and responses when enabled, including streaming data and error bodies. Credentials are redacted. The latest 100 exchanges are retained separately and can be viewed or cleared from the request log.
@@ -103,9 +101,12 @@ A reasoning-effort mapping can use `high=medium, low=none`. Leaving it empty for
 | Item | Behavior |
 | --- | --- |
 | Debug details | Off by default. When enabled, full upstream requests and responses are stored and may contain prompts and model output. Authentication headers and the configured key are redacted. Up to 100 records and 256 MiB are retained. A record exceeding the storage limit is skipped. Disabling debug mode does not clear existing records. |
-| Monthly quota | Reads the API or Vibe budget based on key type and displays remaining allowance, usage percentage, reset time, and refresh status. Keys in the same organization share the budget. |
+| Request channel | Choose Vibe, Studio / API, or the key's creation source. Vibe adds `metadata.call_source="vibe_code"`; Studio removes this field while preserving other metadata. Changes apply to new requests without restarting. Creation source and request channel are displayed separately. |
+| Monthly quota | Displays both Vibe and Studio / API budgets, including remaining allowance, usage percentage, reset time, pay-as-you-go status, and refresh status. The current request channel is highlighted. Keys in the same organization share the corresponding budget. |
 | Unavailable quota | Displays the upstream status or error. A previous result retains its timestamp. Custom API URLs display quota lookup as unavailable. |
 | Request details | Time, request model, upstream model, reasoning effort, result, masked credential, first-token time, total duration, and token usage. |
+
+Studio uses the upstream default billing route; Mistral determines the actual charged pool. Remote checks showed that a Studio-created key can charge Vibe with the Vibe marker, while a Vibe-created key still charged Vibe after removing it. The console displays a note for that configuration and distinguishes the selected channel from a confirmed billing result.
 | Statistics | Apply filters to the most recent 10,000 retained requests, with paginated details. Missing historical fields display `—`. |
 | Cache hit rate | Cached tokens divided by input tokens across requests that reported cache usage. |
 | Average token speed | Output tokens from successful streaming requests divided by their combined generation time after the first token. Non-streaming requests display `—` for first-token time. |

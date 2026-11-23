@@ -19,6 +19,7 @@
   let debugPane = "request";
   const selectedModels = new Set();
   const refreshingKeys = new Set();
+  const switchingKeys = new Set();
       function readSessionKey() {
         if (sessionKeySuppressed) return "";
         try { return sessionStorage.getItem(sessionKeyName) || ""; }
@@ -263,17 +264,43 @@
     }
     notify("调试内容已复制");
   }
+  function activeKeyChannel(key) {
+    if (key.channel === "vibe" || key.channel === "studio") return key.channel;
+    const source = key.source || key.quota?.kind;
+    return source === "chat" ? "vibe" : source === "api" ? "studio" : "";
+  }
+  function renderKeyQuota(key, channel) {
+    const kind = channel === "vibe" ? "chat" : "api";
+    const quota = key.quotas?.[channel] || (key.quota?.kind === kind ? key.quota : null);
+    const available = quota?.available;
+    const active = activeKeyChannel(key) === channel;
+    const remaining = available ? `${quota.remaining.toFixed(2)} ${escapeHTML(quota.currency || "")}` : "—";
+    return `<div class="quota-pool ${active ? "active" : ""}"><div class="quota-title"><span>${channel === "vibe" ? "Vibe" : "Studio / API"} 月度额度</span>${active ? '<span class="badge success">当前渠道</span>' : '<span class="muted">剩余</span>'}</div><div class="quota-value">${remaining}</div><div class="quota-track"><div class="quota-fill ${quota?.used_percent >= 90 ? "low" : ""}" style="width:${available ? Math.max(0, Math.min(100, 100 - quota.used_percent)) : 0}%"></div></div><div class="sub">${available ? `已用 ${quota.used.toFixed(2)} / ${quota.limit.toFixed(2)} ${escapeHTML(quota.currency || "")} · ${quota.used_percent.toFixed(1)}%` : escapeHTML(quota?.error || "尚未获取额度")}</div>${available && quota.error ? `<div class="sub error-text">${escapeHTML(quota.error)}，显示上次结果</div>` : ""}<div class="sub">${escapeHTML(quota?.plan || "套餐待查询")} · 重置 ${escapeHTML(dateText(quota?.reset_at))}</div>${available ? `<div class="sub">${quota.pay_as_you_go ? "已开启超额按量付费" : "按套餐额度使用"}</div>` : ""}<div class="sub">${quota?.updated_at ? `更新于 ${escapeHTML(dateText(quota.updated_at))}` : "额度来自 Mistral"}</div></div>`;
+  }
+  async function switchKeyChannel(id, channel) {
+    if (switchingKeys.has(id)) return;
+    switchingKeys.add(id); renderKeys();
+    try {
+      const updated = await api("/keys/channel", jsonOptions("PATCH", { id, channel }));
+      const index = snapshot.keys.findIndex(key => key.id === id);
+      if (index >= 0) snapshot.keys[index] = updated;
+      notify(channel === "auto" ? "已恢复按 Key 来源选择渠道，新请求生效" : `已切换至 ${channel === "vibe" ? "Vibe" : "Studio / API"} 请求渠道，新请求生效`);
+    } catch (error) { notify(error.message, true); }
+    finally { switchingKeys.delete(id); renderKeys(); }
+  }
   function renderKeys() {
     const query = $("keySearch").value.trim().toLowerCase();
     const keys = [...snapshot.keys].sort((a, b) => (b.priority || 0) - (a.priority || 0)).filter(key => `${key.label} ${key.masked} ${key.base_url}`.toLowerCase().includes(query));
     $("keyCount").textContent = `${keys.length} 个凭证`;
     $("keyList").innerHTML = keys.length ? keys.map(key => {
-      const quota = key.quota, available = quota?.available;
-      const remaining = available ? `${quota.remaining.toFixed(2)} ${escapeHTML(quota.currency || "")}` : "—";
+      const source = key.source || key.quota?.kind;
+      const sourceName = source === "chat" ? "Vibe Key" : source === "api" ? "Studio Key" : source ? `其他来源（${source}）` : "待查询";
+      const active = activeKeyChannel(key);
+      const channelName = active === "vibe" ? "Vibe" : active === "studio" ? "Studio / API" : "待识别，可手动选择";
       return `<article class="key-card"><div class="key-main"><div><div class="key-name">${escapeHTML(key.label)}<span class="badge ${key.enabled ? "success" : ""}">${key.enabled ? "已启用" : "已停用"}</span></div><div class="sub mono">${escapeHTML(key.masked)}</div><div class="sub mono">${escapeHTML(key.base_url || "https://api.mistral.ai/v1")}</div><div class="key-meta"><span class="badge">优先级 ${Number(key.priority || 0)}</span></div></div>
-      <div><div class="quota-title"><span>${quota?.kind === "chat" ? "Vibe 月度额度" : "API 月度额度"}</span><span class="muted">剩余</span></div><div class="quota-value">${remaining}</div><div class="quota-track"><div class="quota-fill ${quota?.used_percent >= 90 ? "low" : ""}" style="width:${available ? Math.max(0, Math.min(100, 100 - quota.used_percent)) : 0}%"></div></div><div class="sub">${available ? `已用 ${quota.used.toFixed(2)} / ${quota.limit.toFixed(2)} ${escapeHTML(quota.currency || "")} · ${quota.used_percent.toFixed(1)}%` : escapeHTML(quota?.error || "尚未获取额度")}</div>${available && quota.error ? `<div class="sub error-text">${escapeHTML(quota.error)}，显示上次结果</div>` : ""}</div>
-      <div class="key-plan"><div class="muted">${escapeHTML(quota?.plan || "套餐待查询")}</div><div class="sub">重置时间 ${escapeHTML(dateText(quota?.reset_at))}</div>${available ? `<div class="sub">${quota.pay_as_you_go ? "已开启超额按量付费" : "按套餐额度使用"}</div>` : ""}</div></div>
-      <div class="key-bottom"><span class="sub">${quota?.updated_at ? `更新于 ${escapeHTML(dateText(quota.updated_at))}` : "额度来自 Mistral"}</span><div class="actions"><button class="switch" role="switch" aria-checked="${key.enabled}" data-toggle-key="${escapeHTML(key.id)}" type="button"><span class="switch-track"></span>${key.enabled ? "已启用" : "已停用"}</button><button class="btn small" data-quota-key="${escapeHTML(key.id)}" type="button" ${refreshingKeys.has(key.id) ? "disabled" : ""}>${refreshingKeys.has(key.id) ? "刷新中…" : "↻ 额度"}</button><button class="btn small" data-test-key="${escapeHTML(key.id)}" type="button">测试</button><button class="btn small" data-edit-key="${escapeHTML(key.id)}" type="button">编辑</button><button class="btn small btn-danger" data-delete-key="${escapeHTML(key.id)}" type="button">删除</button></div></div></article>`;
+      ${renderKeyQuota(key, "vibe")}${renderKeyQuota(key, "studio")}</div>
+      <div class="key-channel"><div><div class="sub">创建来源：${escapeHTML(sourceName)}</div><div>当前请求渠道：<strong>${escapeHTML(channelName)}</strong>${key.enabled ? "" : "（凭证已停用）"}</div>${active === "studio" && source === "chat" ? '<div class="sub channel-note">Studio 渠道使用上游默认计费；Vibe 来源 Key 仍可能扣 Vibe 池。</div>' : ""}</div><div class="segments" role="group" aria-label="${escapeHTML(key.label)} 的使用渠道">${[["auto", "按来源"], ["vibe", "Vibe"], ["studio", "Studio / API"]].map(([channel, label]) => `<button type="button" data-channel-key="${escapeHTML(key.id)}" data-channel="${channel}" aria-pressed="${(key.channel || "auto") === channel}" ${switchingKeys.has(key.id) ? "disabled" : ""}>${label}</button>`).join("")}</div></div>
+      <div class="key-bottom"><span class="sub">切换渠道后，新请求按所选渠道发送。</span><div class="actions"><button class="switch" role="switch" aria-checked="${key.enabled}" data-toggle-key="${escapeHTML(key.id)}" type="button"><span class="switch-track"></span>${key.enabled ? "已启用" : "已停用"}</button><button class="btn small" data-quota-key="${escapeHTML(key.id)}" type="button" ${refreshingKeys.has(key.id) ? "disabled" : ""}>${refreshingKeys.has(key.id) ? "刷新中…" : "↻ 额度"}</button><button class="btn small" data-test-key="${escapeHTML(key.id)}" type="button">测试</button><button class="btn small" data-edit-key="${escapeHTML(key.id)}" type="button">编辑</button><button class="btn small btn-danger" data-delete-key="${escapeHTML(key.id)}" type="button">删除</button></div></div></article>`;
     }).join("") : '<div class="panel empty"><strong>暂无匹配凭证</strong>添加 Mistral API Key 后即可配置模型。</div>';
   }
   async function refreshKeyQuota(id, force) {
@@ -282,12 +309,16 @@
     try {
       const updated = await api("/keys/quota", jsonOptions("POST", { id, force }));
       const index = snapshot.keys.findIndex(key => key.id === id);
-      if (index >= 0) snapshot.keys[index] = updated;
+      if (index >= 0) {
+        // A slow quota response must not undo a channel switch or credential edit.
+        const current = snapshot.keys[index];
+        snapshot.keys[index] = { ...current, source: updated.source, quotas: updated.quotas };
+      }
     } catch (error) { notify(error.message, true); }
     finally { refreshingKeys.delete(id); renderKeys(); }
   }
   async function refreshQuotas(force) {
-    const pending = snapshot.keys.filter(key => force || !key.quota || Date.now() - new Date(key.quota.updated_at).getTime() >= 300000).map(key => key.id);
+    const pending = snapshot.keys.filter(key => force || !key.quotas || Date.now() - new Date(key.quotas.updated_at).getTime() >= 300000).map(key => key.id);
     const worker = async () => { while (pending.length) await refreshKeyQuota(pending.shift(), force); };
     await Promise.all([worker(), worker()]);
   }
@@ -296,6 +327,7 @@
     $("keyLabel").value = key?.label || "";
     $("baseUrl").value = key?.base_url || "https://api.mistral.ai/v1";
     $("keyPriority").value = key?.priority || 0;
+    $("keyChannel").value = key?.channel || "auto";
     $("apiSecret").required = !key;
     $("apiSecret").placeholder = key ? "留空保留当前密钥" : "粘贴 API Key";
     $("keyDialogTitle").textContent = key ? "编辑凭证" : "添加凭证";
@@ -384,7 +416,7 @@
     event.preventDefault();
     const form = event.currentTarget, id = $("keyId").value;
     const old = snapshot.keys.find(key => key.id === id);
-    const input = { id, label: $("keyLabel").value.trim(), secret: $("apiSecret").value.trim(), base_url: $("baseUrl").value.trim(), priority: Number($("keyPriority").value), enabled: old ? old.enabled : true };
+    const input = { id, label: $("keyLabel").value.trim(), secret: $("apiSecret").value.trim(), base_url: $("baseUrl").value.trim(), priority: Number($("keyPriority").value), channel: $("keyChannel").value, enabled: old ? old.enabled : true };
     await busy(form.querySelector('[type="submit"]'), async () => {
       $("keyError").textContent = "";
       let key;
@@ -479,6 +511,7 @@
     }
     if (data.editKey) openKey(snapshot.keys.find(key => key.id === data.editKey));
     if (data.quotaKey) refreshKeyQuota(data.quotaKey, true);
+    if (data.channelKey) switchKeyChannel(data.channelKey, data.channel);
     if (data.testKey) busy(button, async () => { const result = await api("/keys/test", jsonOptions("POST", { id: data.testKey })); notify(`连接成功，可用 ${result.model_count} 个模型`); });
     if (data.toggleKey) busy(button, async () => {
       const key = snapshot.keys.find(key => key.id === data.toggleKey);

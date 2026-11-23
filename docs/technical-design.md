@@ -89,9 +89,11 @@ flowchart LR
 
 ## 凭证与额度
 
-凭证记录包含名称、API Key、上游 API 地址、启用状态、优先级、创建时间和最近一次额度结果。API Key 保存在本地 `state.json`。管理 API 返回的 `safeKey` 不包含原始 Key，只返回尾号掩码和供控制台管理使用的公开字段。
+凭证记录包含名称、API Key、上游 API 地址、启用状态、优先级、创建时间、创建来源 `source`、使用渠道 `channel` 和双池额度 `quotas`。API Key 保存在本地 `state.json`。管理 API 返回的 `safeKey` 不包含原始 Key，只返回尾号掩码和供控制台管理使用的公开字段。
 
-连接测试通过所选凭证请求模型目录。额度查询只对 Mistral 官方 HTTPS 主机启用，并按插件代理配置选择独立 HTTP 通道或 CPA HTTP 回调，请求 Vibe 身份、预算和订阅接口。额度刷新按凭证 ID 合并并发请求，5 分钟内默认复用已有结果。刷新失败时保留上一份额度并附带最新错误。
+渠道可选 `auto`、`vibe`、`studio`；旧记录未配置渠道时按创建来源选择，`chat` 对应 Vibe，`api` 对应 Studio。创建来源未知时自动模式保持原请求，页面提示可手动选择。普通和流式聊天请求在协议转换后统一处理渠道：Vibe 覆盖 `metadata.call_source` 为 `vibe_code`，Studio 移除该键；其他 metadata 保留，空 metadata 对象移除。改变标记的值不能用于强制 Studio 计费。Studio 路径使用上游默认计费，实测 Vibe 来源 Key 仍可能扣 Vibe 池，因此页面标识当前请求渠道，并为此配置显示扣费提示。
+
+连接测试通过所选凭证请求模型目录。额度查询只对 Mistral 官方 HTTPS 主机启用，并按插件代理配置选择独立 HTTP 通道或 CPA HTTP 回调，请求 Vibe 身份、预算和订阅接口。`whoami.plan_type` 保存创建来源，身份查询失败不阻断双池预算查询。`quotas.vibe` 与 `quotas.studio` 分别读取 `vibe_budget`、`api_budget`，按量付费设置也按池解析。额度刷新按凭证 ID 合并并发请求，5 分钟内默认复用已有结果。单池失败保留该池上次成功结果与时间，并附带最新错误；并发切换渠道不会被额度刷新覆盖。保留旧 `quota` 字段作为当前请求渠道的预算视图，旧单池缓存不会误用于另一个池。
 
 `PATCH /proxy` 接收 `proxy_url` 字符串；空字符串恢复沿用 CPA 配置。配置经过协议、主机和端口校验，并通过现有原子状态写入持久化；保存失败时回滚。代理支持 URL 中的认证信息，设置页默认隐藏地址。聊天请求开始时读取代理配置快照，保存变更不切换正在进行的流。代理 Transport 复用连接，切换配置或插件关闭时清理空闲连接。
 
@@ -104,6 +106,7 @@ flowchart LR
 | `GET /state` | 返回凭证掩码、模型目录、映射和 revision |
 | `POST /keys`、`PATCH /keys` | 添加或编辑凭证 |
 | `POST /keys/test`、`POST /keys/quota` | 测试凭证或刷新额度 |
+| `PATCH /keys/channel` | 持久化渠道切换，保留凭证其他设置、创建来源与双池额度 |
 | `PATCH /keys/toggle`、`DELETE /keys/delete` | 启用、停用或删除凭证 |
 | `POST /models/sync` | 从上游拉取候选模型目录 |
 | `POST /models`、`PATCH /models` | 添加或编辑映射，或批量切换启用状态 |
