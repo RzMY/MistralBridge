@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -428,6 +429,20 @@ func transformRequest(raw []byte, model, thinkingMap string) ([]byte, error) {
 		return nil, errors.New("messages must be an array")
 	}
 	for _, message := range messages {
+		// Client cache hints are not part of Mistral's content chunk schema.
+		var contentParts []map[string]json.RawMessage
+		if json.Unmarshal(message["content"], &contentParts) == nil {
+			changed := false
+			for _, part := range contentParts {
+				if _, exists := part["cache_control"]; exists {
+					delete(part, "cache_control")
+					changed = true
+				}
+			}
+			if changed {
+				message["content"], _ = json.Marshal(contentParts)
+			}
+		}
 		var role string
 		_ = json.Unmarshal(message["role"], &role)
 		var reasoning strings.Builder
@@ -554,18 +569,18 @@ func upstreamStatusError(status int, body []byte) error {
 	message := "Mistral API rejected the request"
 	var parsed struct {
 		Message string          `json:"message"`
-		Detail  string          `json:"detail"`
+		Detail  json.RawMessage `json:"detail"`
 		Error   json.RawMessage `json:"error"`
 	}
 	if json.Unmarshal(body, &parsed) == nil {
 		var nested struct {
-			Message string `json:"message"`
-			Detail  string `json:"detail"`
+			Message string          `json:"message"`
+			Detail  json.RawMessage `json:"detail"`
 		}
 		_ = json.Unmarshal(parsed.Error, &nested)
 		var errorText string
 		_ = json.Unmarshal(parsed.Error, &errorText)
-		for _, text := range []string{parsed.Message, parsed.Detail, nested.Message, nested.Detail, errorText} {
+		for _, text := range []string{parsed.Message, upstreamErrorDetail(parsed.Detail), nested.Message, upstreamErrorDetail(nested.Detail), errorText} {
 			if strings.TrimSpace(text) != "" {
 				message = text
 				break
@@ -581,6 +596,54 @@ func upstreamStatusError(status int, body []byte) error {
 		status = 502
 	}
 	return &statusError{Status: status, Message: message}
+}
+
+func upstreamErrorDetail(raw json.RawMessage) string {
+	if detail, ok := rawString(raw); ok {
+		return detail
+	}
+	var details []struct {
+		Location []json.RawMessage `json:"loc"`
+		Message  string            `json:"msg"`
+	}
+	if json.Unmarshal(raw, &details) != nil {
+		return ""
+	}
+	var summaries []string
+	for _, detail := range details {
+		if strings.TrimSpace(detail.Message) == "" {
+			continue
+		}
+		var location strings.Builder
+		for _, segment := range detail.Location {
+			if field, ok := rawString(segment); ok {
+				// Pydantic includes long union type descriptions in validation paths.
+				if strings.ContainsAny(field, "[]") {
+					continue
+				}
+				if location.Len() > 0 {
+					location.WriteByte('.')
+				}
+				location.WriteString(field)
+			} else {
+				var index int
+				if json.Unmarshal(segment, &index) == nil {
+					location.WriteByte('[')
+					location.WriteString(strconv.Itoa(index))
+					location.WriteByte(']')
+				}
+			}
+		}
+		message := detail.Message
+		if location.Len() > 0 {
+			message = location.String() + ": " + message
+		}
+		summaries = append(summaries, message)
+		if len(summaries) == 3 {
+			break
+		}
+	}
+	return strings.Join(summaries, "; ")
 }
 
 func parseUsage(raw []byte) map[string]int {
