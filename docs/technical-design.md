@@ -6,7 +6,7 @@
 
 Mistral Bridge 是 CLIProxyAPI（CPA）的原生 Go 动态库插件。CPA 负责接收客户端 HTTP 请求、管理 API 鉴权、执行模型路由，以及提供带 CPA 网络代理配置的 HTTP 回调。插件负责凭证和映射状态、Mistral 请求转换、响应规范化、用量统计和管理页面。
 
-插件通过 CPA 提供的 C ABI v1 和 JSON RPC 方法与宿主通信。网络请求统一使用 `host.http.do` 或 `host.http.do_stream`，不会自行创建 HTTP 客户端。主要入口位于 [main.go](../main.go)、[plugin.go](../plugin.go) 和 [mistral.go](../mistral.go)。
+插件通过 CPA 提供的 C ABI v1 和 JSON RPC 方法与宿主通信。未配置独立代理时，网络请求使用 `host.http.do` 或 `host.http.do_stream`，沿用 CPA 的 HTTP 出口策略。配置独立代理后，由 [proxy.go](../proxy.go) 使用 Go HTTP Transport 发送请求，显式覆盖环境代理，支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。该路径保留插件日志和调试捕获，但不经过 CPA 的 HTTP 回调日志。主要入口位于 [main.go](../main.go)、[plugin.go](../plugin.go) 和 [mistral.go](../mistral.go)。
 
 控制台 HTML、CSS、JavaScript 和图标通过 Go `embed` 编译进动态库。面板内打开时复用同源 CPA / CPAMP 管理会话；直接打开控制台时显示管理密钥连接入口。
 
@@ -16,6 +16,8 @@ flowchart LR
     CPA --> Plugin[Mistral Bridge executor]
     Plugin --> State[凭证与模型映射]
     Plugin --> HostHTTP[CPA host.http 回调]
+    Plugin --> IndependentProxy[已配置的插件独立代理]
+    IndependentProxy --> Mistral
     HostHTTP --> Proxy[CPA 网络代理配置]
     Proxy --> Mistral[Mistral API]
     Mistral --> HostHTTP
@@ -75,9 +77,9 @@ flowchart LR
 
 ### 流式与非流式请求
 
-非流式请求通过 `host.http.do` 发送到凭证 API 地址下的 `/chat/completions`。插件读取原始响应体并规范化后返回 CPA。
+非流式请求通过统一 HTTP 分派发送到凭证 API 地址下的 `/chat/completions`。配置独立代理时使用插件 HTTP Transport，否则调用 `host.http.do`。插件读取原始响应体并规范化后返回 CPA。
 
-流式请求通过 `host.http.do_stream` 打开上游流。插件确保请求中的 `stream` 为 `true`，并在 `stream_options` 中设置 `include_usage: true`。上游数据由 `host.http.stream_read` 分块读取，插件逐行规范化 SSE 事件，再通过 `host.stream.emit` 传给 CPA。客户端断开时，普通模式结束读取；调试模式会继续读取上游以保存完整响应。
+流式请求根据配置通过插件 HTTP Transport 或 `host.http.do_stream` 打开上游流。插件确保请求中的 `stream` 为 `true`，并在 `stream_options` 中设置 `include_usage: true`。上游数据由本地响应体或 `host.http.stream_read` 分块读取，插件逐行规范化 SSE 事件，再通过 `host.stream.emit` 传给 CPA。客户端断开时，普通模式结束读取；调试模式会继续读取上游以保存完整响应。流关闭时释放响应体和请求上下文。
 
 ### 响应规范化
 
@@ -89,7 +91,9 @@ flowchart LR
 
 凭证记录包含名称、API Key、上游 API 地址、启用状态、优先级、创建时间和最近一次额度结果。API Key 保存在本地 `state.json`。管理 API 返回的 `safeKey` 不包含原始 Key，只返回尾号掩码和供控制台管理使用的公开字段。
 
-连接测试通过所选凭证请求模型目录。额度查询只对 Mistral 官方 HTTPS 主机启用，并通过 CPA HTTP 回调请求 Vibe 身份、预算和订阅接口。额度刷新按凭证 ID 合并并发请求，5 分钟内默认复用已有结果。刷新失败时保留上一份额度并附带最新错误。
+连接测试通过所选凭证请求模型目录。额度查询只对 Mistral 官方 HTTPS 主机启用，并按插件代理配置选择独立 HTTP 通道或 CPA HTTP 回调，请求 Vibe 身份、预算和订阅接口。额度刷新按凭证 ID 合并并发请求，5 分钟内默认复用已有结果。刷新失败时保留上一份额度并附带最新错误。
+
+`PATCH /proxy` 接收 `proxy_url` 字符串；空字符串恢复沿用 CPA 配置。配置经过协议、主机和端口校验，并通过现有原子状态写入持久化；保存失败时回滚。代理支持 URL 中的认证信息，设置页默认隐藏地址。聊天请求开始时读取代理配置快照，保存变更不切换正在进行的流。代理 Transport 复用连接，切换配置或插件关闭时清理空闲连接。
 
 ## 管理 API
 

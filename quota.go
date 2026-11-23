@@ -75,7 +75,7 @@ func refreshQuota(body []byte, callbackID string) ([]byte, error) {
 }
 
 func quotaJSON(endpoint string, key apiKey, callbackID string, result any) error {
-	raw, err := hostCall("host.http.do", upstreamRequest{Method: http.MethodGet, URL: endpoint, Headers: http.Header{"Authorization": {"Bearer " + key.Secret}, "Accept": {"application/json"}}, HostCallbackID: callbackID})
+	raw, err := doUpstreamHTTP(nil, upstreamRequest{Method: http.MethodGet, URL: endpoint, Headers: http.Header{"Authorization": {"Bearer " + key.Secret}, "Accept": {"application/json"}}, HostCallbackID: callbackID}, currentState().ProxyURL)
 	if err != nil {
 		return fmt.Errorf("额度服务暂时无法连接")
 	}

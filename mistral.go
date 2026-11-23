@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -43,6 +44,8 @@ type upstreamStreamResponse struct {
 	Headers    http.Header `json:"headers"`
 	StreamID   string      `json:"stream_id"`
 	Body       []byte      `json:"body,omitempty"`
+	reader     io.ReadCloser
+	cleanup    func()
 }
 
 type streamReadResponse struct {
@@ -91,7 +94,7 @@ func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *reque
 	}
 	callbackReq := upstreamRequest{Method: http.MethodPost, URL: endpoint, Headers: headers, Body: body, HostCallbackID: req.HostCallbackID}
 	trace.captureRequest(callbackReq.Method, callbackReq.URL, callbackReq.Headers, callbackReq.Body)
-	responseRaw, err := hostCall("host.http.do", callbackReq)
+	responseRaw, err := doUpstreamHTTP(ctx, callbackReq, settings.ProxyURL)
 	if err != nil {
 		trace.captureResponseError(err)
 		return nil, nil, &statusError{Status: 502, Message: "Mistral API request failed"}
@@ -133,38 +136,30 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 	}
 	headers := http.Header{"Authorization": []string{"Bearer " + key.Secret}, "Content-Type": []string{"application/json"}, "Accept": []string{"text/event-stream"}}
 	trace.captureRequest(http.MethodPost, endpoint, headers, body)
-	streamRaw, err := hostCall("host.http.do_stream", map[string]any{
-		"method":           http.MethodPost,
-		"url":              endpoint,
-		"headers":          headers,
-		"body":             body,
-		"host_callback_id": req.HostCallbackID,
-	})
+	stream, err := openUpstreamHTTPStream(ctx, upstreamRequest{
+		Method: http.MethodPost, URL: endpoint, Headers: headers,
+		Body: body, HostCallbackID: req.HostCallbackID,
+	}, settings.ProxyURL)
 	if err != nil {
 		trace.captureResponseError(err)
 		return nil, &statusError{Status: 502, Message: "Mistral streaming request failed"}
-	}
-	var stream upstreamStreamResponse
-	if err = json.Unmarshal(streamRaw, &stream); err != nil {
-		trace.captureResponse(0, nil, streamRaw, true)
-		return nil, &statusError{Status: 502, Message: "Invalid streaming response from HTTP bridge"}
 	}
 	trace.captureResponseHead(stream.StatusCode, stream.Headers)
 	if stream.StatusCode < 200 || stream.StatusCode > 299 {
 		body := append([]byte(nil), stream.Body...)
 		trace.captureResponseChunk(stream.Body)
-		if stream.StreamID != "" {
-			if trace.capturesDebug() {
+		if stream.opened() {
+			if trace.capturesDebug() || stream.reader != nil {
 				body = append(body, readStreamErrorBody(req, stream, trace)...)
 			} else {
-				_, _ = hostCall("host.http.stream_close", map[string]any{"stream_id": stream.StreamID, "host_callback_id": req.HostCallbackID})
+				stream.close(req.HostCallbackID)
 			}
 		} else {
 			trace.completeResponse()
 		}
 		return nil, upstreamStatusError(stream.StatusCode, body)
 	}
-	if stream.StreamID == "" {
+	if !stream.opened() {
 		trace.captureResponseError(errors.New("Mistral stream was not opened"))
 		return nil, &statusError{Status: 502, Message: "Mistral stream was not opened"}
 	}
@@ -173,16 +168,11 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 }
 
 func readStreamErrorBody(req rpcExecutorRequest, stream upstreamStreamResponse, trace *requestTrace) []byte {
-	defer hostCall("host.http.stream_close", map[string]any{"stream_id": stream.StreamID, "host_callback_id": req.HostCallbackID})
+	defer stream.close(req.HostCallbackID)
 	var body bytes.Buffer
 	for {
-		readRaw, err := hostCall("host.http.stream_read", map[string]any{"stream_id": stream.StreamID, "host_callback_id": req.HostCallbackID})
+		chunk, err := stream.read(req.HostCallbackID)
 		if err != nil {
-			trace.captureResponseError(err)
-			return body.Bytes()
-		}
-		var chunk streamReadResponse
-		if err := json.Unmarshal(readRaw, &chunk); err != nil {
 			trace.captureResponseError(err)
 			return body.Bytes()
 		}
@@ -205,22 +195,15 @@ func relayStream(req rpcExecutorRequest, stream upstreamStreamResponse, trace *r
 	var streamErr error
 	var usage map[string]int
 	defer func() { trace.finish(usage, streamErr) }()
-	defer hostCall("host.http.stream_close", map[string]any{"stream_id": stream.StreamID, "host_callback_id": req.HostCallbackID})
+	defer stream.close(req.HostCallbackID)
 	defer hostCall("host.stream.close", map[string]any{"stream_id": req.StreamID})
 	var pending []byte
 	for {
-		readRaw, err := hostCall("host.http.stream_read", map[string]any{"stream_id": stream.StreamID, "host_callback_id": req.HostCallbackID})
+		chunk, err := stream.read(req.HostCallbackID)
 		if err != nil {
 			streamErr = &statusError{502, "Mistral 流式响应中断"}
 			trace.captureResponseError(err)
 			hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "error": "Mistral stream read failed"})
-			return
-		}
-		var chunk streamReadResponse
-		if json.Unmarshal(readRaw, &chunk) != nil {
-			streamErr = &statusError{502, "Mistral 流式响应中断"}
-			trace.captureResponseError(errors.New("Invalid Mistral stream chunk"))
-			hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "error": "Invalid Mistral stream chunk"})
 			return
 		}
 		trace.captureResponseChunk(chunk.Payload)
@@ -291,12 +274,8 @@ func relayStream(req rpcExecutorRequest, stream upstreamStreamResponse, trace *r
 
 func drainUpstreamStream(req rpcExecutorRequest, stream upstreamStreamResponse, trace *requestTrace) error {
 	for {
-		readRaw, err := hostCall("host.http.stream_read", map[string]any{"stream_id": stream.StreamID, "host_callback_id": req.HostCallbackID})
+		chunk, err := stream.read(req.HostCallbackID)
 		if err != nil {
-			return err
-		}
-		var chunk streamReadResponse
-		if err := json.Unmarshal(readRaw, &chunk); err != nil {
 			return err
 		}
 		if chunk.Error != "" {

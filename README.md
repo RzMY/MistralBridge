@@ -27,7 +27,8 @@ Mistral Bridge 是 CLIProxyAPI（CPA）的原生动态库插件。它对齐 Mist
 - **模型映射**。拉取上游目录，自定义客户端模型名和思考强度映射。启用、禁用或修改映射后同步到 CPA 模型列表。
 - **请求日志**。按模型、结果、凭证、思考强度和时间范围筛选，汇总请求数、Token、缓存命中率及生成速率。
 - **请求调试**。启用后保存发往 Mistral 的完整请求与响应，包括流式内容和错误正文。认证信息脱敏，独立保留最近 100 条，可从请求日志查看或清理。
-- **面板集成**。复用 CPA / CPAMP 保存的同源管理会话，跟随 CPAMP 切换深色与浅色主题。上游请求、模型拉取及额度查询使用 CPA 的 HTTP 出口和代理配置。
+- **独立代理**。在“代理设置”中配置 HTTP、HTTPS、SOCKS5 或 SOCKS5H 代理，支持用户名和密码。聊天、流式响应、凭证测试、模型拉取及额度查询统一使用该代理；留空时沿用 CPA 的 HTTP 出口和代理配置。
+- **面板集成**。复用 CPA / CPAMP 保存的同源管理会话，跟随 CPAMP 切换深色与浅色主题。
 
 ## 界面预览
 
@@ -112,6 +113,8 @@ Linux 发布包以 Ubuntu 22.04 为构建基线，适用于 glibc 2.35 及以上
 状态保存在 `<auth-dir>/plugin-data/mistral-bridge/state.json`，请求元数据保存在同目录的 `requests.jsonl`，调试明细位于 `debug-logs/`。未取得 CPA `auth-dir` 时使用 `$HOME/.cli-proxy-api/plugin-data/mistral-bridge`，也可通过 `MISTRAL_BRIDGE_DATA_DIR` 指定目录。
 
 `state.json` 包含上游 Key，页面仅展示掩码。容器部署请持久化插件目录和数据目录。要重新体验首次使用流程，可以停止 CPA 后备份并移走该插件的数据目录，再启动 CPA。
+
+代理配置保存在同一 `state.json` 的 `proxy_url` 字段中，保存后对新请求生效。点击“沿用 CPA 配置”，或清空代理地址后保存，即可恢复 CPA 的 HTTP 回调通道。独立代理模式下仍保留插件的请求日志和调试明细，但请求不经过 CPA 的 `host.http` 回调。
 
 ## 从源码构建
 

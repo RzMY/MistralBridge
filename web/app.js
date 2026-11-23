@@ -7,7 +7,7 @@
   const storageSalt = "cli-proxy-api-webui::secure-storage";
   let sessionKeySuppressed = false;
   let managementKey = readSessionKey() || readPanelKey();
-  let snapshot = { keys: [], catalog: [], models: [], debug_mode: false };
+  let snapshot = { keys: [], catalog: [], models: [], debug_mode: false, proxy_url: "" };
   let range = "all";
   let page = 1;
   let totalPages = 1;
@@ -118,6 +118,8 @@
     snapshot = await api("/state");
     snapshot.keys ||= []; snapshot.models ||= []; snapshot.catalog ||= [];
     snapshot.debug_mode = Boolean(snapshot.debug_mode);
+    snapshot.proxy_url ||= "";
+    renderProxy();
     $("debugModeToggle").setAttribute("aria-checked", String(snapshot.debug_mode));
     renderKeys(); renderModels();
     $("catalogOptions").innerHTML = snapshot.catalog.map(model => `<option value="${escapeHTML(model)}"></option>`).join("");
@@ -134,6 +136,32 @@
     });
     if (name === "requests") loadLogs().catch(showError);
     if (name === "keys") refreshQuotas(false);
+  }
+  function renderProxy() {
+    // Background quota refreshes must not overwrite an unsaved proxy edit.
+    if (!$("proxyForm").contains(document.activeElement) && $("proxyUrl").dataset.dirty !== "true") {
+      $("proxyUrl").value = snapshot.proxy_url;
+    }
+    $("proxyStatus").textContent = snapshot.proxy_url ? "独立代理已配置" : "沿用 CPA 配置";
+    $("proxyStatus").classList.toggle("success", Boolean(snapshot.proxy_url));
+  }
+  async function saveProxy(proxyUrl) {
+    const controls = [...$("proxyForm").querySelectorAll("button, input")];
+    controls.forEach(control => { control.disabled = true; });
+    $("proxyForm").setAttribute("aria-busy", "true");
+    $("proxyError").textContent = "";
+    try {
+      const result = await api("/proxy", jsonOptions("PATCH", { proxy_url: proxyUrl }));
+      snapshot.proxy_url = result.proxy_url || "";
+      $("proxyUrl").value = snapshot.proxy_url;
+      delete $("proxyUrl").dataset.dirty;
+      renderProxy();
+      notify(snapshot.proxy_url ? "独立代理已保存，新请求将使用此代理" : "已恢复沿用 CPA 的代理配置");
+    } catch (error) { $("proxyError").textContent = error.message; }
+    finally {
+      controls.forEach(control => { control.disabled = false; });
+      $("proxyForm").removeAttribute("aria-busy");
+    }
   }
   function logQuery() {
     const query = new URLSearchParams({ page: String(page), page_size: $("pageSize").value });
@@ -333,6 +361,18 @@
     $("mappingEnabledLabel").textContent = $("mappingEnabled").checked ? "已启用" : "未启用";
   }
   $("mappingEnabled").addEventListener("change", updateMappingEnabledLabel);
+  $("proxyUrl").addEventListener("input", () => { $("proxyUrl").dataset.dirty = "true"; $("proxyError").textContent = ""; });
+  $("proxyForm").addEventListener("submit", event => {
+    event.preventDefault();
+    if ($("proxyForm").getAttribute("aria-busy") !== "true") saveProxy($("proxyUrl").value.trim());
+  });
+  $("resetProxy").addEventListener("click", () => saveProxy(""));
+  $("showProxy").addEventListener("click", event => {
+    const visible = $("proxyUrl").type === "password";
+    $("proxyUrl").type = visible ? "text" : "password";
+    event.currentTarget.textContent = visible ? "隐藏地址" : "显示地址";
+    event.currentTarget.setAttribute("aria-pressed", String(visible));
+  });
   $("authForm").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;

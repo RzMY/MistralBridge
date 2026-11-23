@@ -27,7 +27,7 @@ const (
 )
 
 // Release builds set this to the tag version with -ldflags -X.
-var pluginVersion = "0.2.1"
+var pluginVersion = "0.3.0"
 
 //go:embed web/index.html web/style.css web/app.js
 var webFiles embed.FS
@@ -94,6 +94,7 @@ type pluginState struct {
 	Catalog   []string       `json:"catalog"`
 	Models    []modelMapping `json:"models"`
 	DebugMode bool           `json:"debug_mode,omitempty"`
+	ProxyURL  string         `json:"proxy_url,omitempty"`
 	Logs      []RequestLog   `json:"-"`
 }
 
@@ -300,6 +301,7 @@ func applyThinking(raw []byte) ([]byte, error) {
 func managementRoutes() []map[string]string {
 	paths := []struct{ method, path string }{
 		{"GET", "/plugins/mistral-bridge/state"},
+		{"PATCH", "/plugins/mistral-bridge/proxy"},
 		{"POST", "/plugins/mistral-bridge/keys"},
 		{"PATCH", "/plugins/mistral-bridge/keys"},
 		{"POST", "/plugins/mistral-bridge/keys/quota"},
@@ -345,6 +347,8 @@ func handleManagement(raw []byte) ([]byte, error) {
 	switch {
 	case method == http.MethodGet && path == "/state":
 		return managementJSON(publicState())
+	case method == http.MethodPatch && path == "/proxy":
+		return updateProxy(req.Body)
 	case method == http.MethodPost && path == "/keys":
 		return saveKey(req.Body, false)
 	case method == http.MethodPatch && path == "/keys":
@@ -687,12 +691,11 @@ func fetchModels(key apiKey, callbackID string) ([]string, error) {
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/models"
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
-	raw, err := hostCall("host.http.do", map[string]any{
-		"method":           http.MethodGet,
-		"url":              parsed.String(),
-		"headers":          http.Header{"Authorization": []string{"Bearer " + key.Secret}, "Accept": []string{"application/json"}},
-		"host_callback_id": callbackID,
-	})
+	raw, err := doUpstreamHTTP(nil, upstreamRequest{
+		Method: http.MethodGet, URL: parsed.String(),
+		Headers:        http.Header{"Authorization": []string{"Bearer " + key.Secret}, "Accept": []string{"application/json"}},
+		HostCallbackID: callbackID,
+	}, currentState().ProxyURL)
 	if err != nil {
 		return nil, err
 	}
@@ -791,6 +794,7 @@ func currentState() pluginState {
 		Catalog:   append([]string{}, state.Catalog...),
 		Models:    append([]modelMapping{}, state.Models...),
 		DebugMode: state.DebugMode,
+		ProxyURL:  state.ProxyURL,
 	}
 }
 
@@ -803,7 +807,7 @@ func publicState() map[string]any {
 	stateMu.RLock()
 	published := publishedRevision
 	stateMu.RUnlock()
-	return map[string]any{"keys": keys, "catalog": snapshot.Catalog, "models": snapshot.Models, "debug_mode": snapshot.DebugMode, "models_revision": modelRevision(snapshot.Models), "published_revision": published}
+	return map[string]any{"keys": keys, "catalog": snapshot.Catalog, "models": snapshot.Models, "debug_mode": snapshot.DebugMode, "proxy_url": snapshot.ProxyURL, "models_revision": modelRevision(snapshot.Models), "published_revision": published}
 }
 
 func publicKey(key apiKey) safeKey {

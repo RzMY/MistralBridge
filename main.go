@@ -98,7 +98,7 @@ func cliproxyPluginFree(ptr unsafe.Pointer, _ C.size_t) {
 }
 
 //export cliproxyPluginShutdown
-func cliproxyPluginShutdown() {}
+func cliproxyPluginShutdown() { closeProxyTransport() }
 
 func okEnvelope(value any) ([]byte, error) {
 	result, err := json.Marshal(value)

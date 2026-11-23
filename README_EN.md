@@ -27,7 +27,8 @@ See the [technical design document (Chinese)](docs/technical-design.md) for impl
 - **Model mappings** fetch the upstream catalog and configure client-facing names and reasoning-effort mappings. Changes to mappings and their enabled state update CPA's model list.
 - **Request logs** filter by model, result, credential, reasoning effort, and time range, with request counts, tokens, cache hit rate, and generation speed.
 - **Request debugging** stores complete upstream requests and responses when enabled, including streaming data and error bodies. Credentials are redacted. The latest 100 exchanges are retained separately and can be viewed or cleared from the request log.
-- **Panel integration** reuses saved same-origin CPA / CPAMP management sessions and follows CPAMP's light and dark themes. Upstream requests, catalog fetches, and quota queries use CPA's HTTP transport and proxy settings.
+- **Independent proxy** supports HTTP, HTTPS, SOCKS5, and SOCKS5H URLs, including username and password, in the **代理设置** (Proxy settings) tab. Chat, streaming, credential tests, catalog fetches, and quota queries use this proxy when configured. Leaving it empty preserves CPA's HTTP transport and proxy settings.
+- **Panel integration** reuses saved same-origin CPA / CPAMP management sessions and follows CPAMP's light and dark themes.
 
 ## Interface Preview
 
@@ -112,6 +113,8 @@ A reasoning-effort mapping can use `high=medium, low=none`. Leaving it empty for
 State is stored at `<auth-dir>/plugin-data/mistral-bridge/state.json`, with request metadata in `requests.jsonl` and debug details in `debug-logs/`. When CPA's `auth-dir` is unavailable, the fallback is `$HOME/.cli-proxy-api/plugin-data/mistral-bridge`. Set `MISTRAL_BRIDGE_DATA_DIR` to use a different directory.
 
 `state.json` contains upstream keys. The console displays masked values. Persist the plugin and data directories when using containers. To repeat first-time setup, stop CPA, back up and move this plugin's data directory, then start CPA again.
+
+The proxy URL is stored in the same `state.json` as `proxy_url` and applies to new requests after saving. Click **沿用 CPA 配置** (Use CPA configuration), or clear the URL and save, to restore CPA's HTTP callbacks. Independent proxy mode retains the plugin's request logs and debug details, while upstream requests bypass CPA's `host.http` callbacks.
 
 ## Build from source
 
