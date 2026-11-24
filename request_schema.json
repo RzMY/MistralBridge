@@ -1,0 +1,1498 @@
+{
+  "source": "https://docs.mistral.ai/openapi.yaml",
+  "retrieved_on": "2026-11-24",
+  "source_sha256": "7652f1307b3bc6cb7a10526c28788a430246f641cb9785a9f1b7b0dd912cdfae",
+  "root": "ChatCompletionRequest",
+  "schemas": {
+    "ChatCompletionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stream": {
+          "type": "boolean"
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "random_seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "discriminator": {
+              "propertyName": "role",
+              "mapping": {
+                "assistant": "#/components/schemas/AssistantMessage",
+                "system": "#/components/schemas/SystemMessage",
+                "tool": "#/components/schemas/ToolMessage",
+                "user": "#/components/schemas/UserMessage"
+              }
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SystemMessage"
+              },
+              {
+                "$ref": "#/components/schemas/UserMessage"
+              },
+              {
+                "$ref": "#/components/schemas/AssistantMessage"
+              },
+              {
+                "$ref": "#/components/schemas/ToolMessage"
+              }
+            ]
+          }
+        },
+        "response_format": {
+          "$ref": "#/components/schemas/ResponseFormat"
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "discriminator": {
+                  "propertyName": "type",
+                  "mapping": {
+                    "function": "#/components/schemas/Tool",
+                    "image_generation": "#/components/schemas/ImageGenerationTool",
+                    "document_library": "#/components/schemas/DocumentLibraryTool",
+                    "connector": "#/components/schemas/CustomConnector"
+                  }
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Tool"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ImageGenerationTool"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DocumentLibraryTool"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CustomConnector"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_choice": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolChoice"
+            },
+            {
+              "$ref": "#/components/schemas/ToolChoiceEnum"
+            }
+          ]
+        },
+        "presence_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frequency_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repetition_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "logprobs": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_logprobs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt_logprobs": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_prompt_logprobs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "n": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prediction": {
+          "$ref": "#/components/schemas/Prediction"
+        },
+        "parallel_tool_calls": {
+          "type": "boolean"
+        },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/MistralPromptMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "guardrails": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/GuardrailConfig"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt_cache_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "service_tier": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/RequestedServiceTier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "safe_prompt": {
+          "type": "boolean"
+        }
+      }
+    },
+    "AssistantMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "const": "assistant"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ContentChunk"
+              }
+            }
+          ]
+        },
+        "tool_calls": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ToolCall"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prefix": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ContentChunk": {
+      "discriminator": {
+        "propertyName": "type",
+        "mapping": {
+          "image_url": "#/components/schemas/ImageURLChunk",
+          "document_url": "#/components/schemas/DocumentURLChunk",
+          "text": "#/components/schemas/TextChunk",
+          "reference": "#/components/schemas/ReferenceChunk",
+          "file": "#/components/schemas/FileChunk",
+          "thinking": "#/components/schemas/ThinkChunk",
+          "input_audio": "#/components/schemas/AudioChunk",
+          "resource": "#/components/schemas/ResourceChunk",
+          "resource_link": "#/components/schemas/ResourceLinkChunk"
+        }
+      },
+      "oneOf": [
+        {
+          "$ref": "#/components/schemas/TextChunk"
+        },
+        {
+          "$ref": "#/components/schemas/ImageURLChunk"
+        },
+        {
+          "$ref": "#/components/schemas/DocumentURLChunk"
+        },
+        {
+          "$ref": "#/components/schemas/ReferenceChunk"
+        },
+        {
+          "$ref": "#/components/schemas/FileChunk"
+        },
+        {
+          "$ref": "#/components/schemas/ThinkChunk"
+        },
+        {
+          "$ref": "#/components/schemas/AudioChunk"
+        },
+        {
+          "$ref": "#/components/schemas/ResourceChunk"
+        },
+        {
+          "$ref": "#/components/schemas/ResourceLinkChunk"
+        }
+      ]
+    },
+    "ImageURLChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "image_url"
+        },
+        "image_url": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ImageURL"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    "ImageURL": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ImageDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ImageDetail": {
+      "type": "string",
+      "enum": [
+        "low",
+        "auto",
+        "high"
+      ]
+    },
+    "DocumentURLChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "document_url"
+        },
+        "document_url": {
+          "type": "string"
+        },
+        "document_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "TextChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "text"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "ReferenceChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "reference"
+        },
+        "reference_ids": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "FileChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "file"
+        },
+        "file_id": {
+          "type": "string"
+        }
+      }
+    },
+    "ThinkChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "thinking"
+        },
+        "thinking": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextChunk"
+              },
+              {
+                "$ref": "#/components/schemas/ToolReferenceChunk"
+              },
+              {
+                "$ref": "#/components/schemas/ReferenceChunk"
+              }
+            ]
+          }
+        },
+        "signature": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "closed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ToolReferenceChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "tool_reference"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/BuiltInConnectors"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "favicon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "BuiltInConnectors": {
+      "type": "string",
+      "enum": [
+        "web_search",
+        "web_search_premium",
+        "code_interpreter",
+        "image_generation",
+        "document_library",
+        "mistral_mcp"
+      ]
+    },
+    "AudioChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "input_audio"
+        },
+        "input_audio": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    "ResourceChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "resource"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "content": {
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "text": "#/components/schemas/TextChunk",
+              "image_url": "#/components/schemas/ImageURLChunk"
+            }
+          },
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/TextChunk"
+            },
+            {
+              "$ref": "#/components/schemas/ImageURLChunk"
+            }
+          ]
+        }
+      }
+    },
+    "ResourceLinkChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "resource_link"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ToolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/components/schemas/ToolTypes"
+        },
+        "function": {
+          "$ref": "#/components/schemas/FunctionCall"
+        },
+        "index": {
+          "type": "integer"
+        }
+      }
+    },
+    "ToolTypes": {
+      "type": "string",
+      "enum": [
+        "function"
+      ]
+    },
+    "FunctionCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "arguments": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": true
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    "SystemMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "const": "system"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/SystemMessageContentChunks"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "SystemMessageContentChunks": {
+      "discriminator": {
+        "propertyName": "type",
+        "mapping": {
+          "text": "#/components/schemas/TextChunk",
+          "thinking": "#/components/schemas/ThinkChunk"
+        }
+      },
+      "oneOf": [
+        {
+          "$ref": "#/components/schemas/TextChunk"
+        },
+        {
+          "$ref": "#/components/schemas/ThinkChunk"
+        }
+      ]
+    },
+    "ToolMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "const": "tool"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ContentChunk"
+              }
+            }
+          ]
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "UserMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "const": "user"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ContentChunk"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ResponseFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "$ref": "#/components/schemas/ResponseFormats"
+        },
+        "json_schema": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/JsonSchema"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ResponseFormats": {
+      "type": "string",
+      "enum": [
+        "text",
+        "json_object",
+        "json_schema"
+      ]
+    },
+    "JsonSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "strict": {
+          "type": "boolean"
+        }
+      }
+    },
+    "Tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "$ref": "#/components/schemas/ToolTypes"
+        },
+        "function": {
+          "$ref": "#/components/schemas/Function"
+        }
+      }
+    },
+    "Function": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "ImageGenerationTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool_configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "image_generation"
+          ]
+        }
+      }
+    },
+    "ToolConfiguration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exclude": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "include": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requires_confirmation": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "DocumentLibraryTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool_configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "document_library"
+          ]
+        },
+        "library_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "CustomConnector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "connector"
+          ]
+        },
+        "connector_id": {
+          "type": "string"
+        },
+        "authorization": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "api-key": "#/components/schemas/APIKeyAuth",
+                  "oauth2-token": "#/components/schemas/OAuth2TokenAuth"
+                }
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/OAuth2TokenAuth"
+                },
+                {
+                  "$ref": "#/components/schemas/APIKeyAuth"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "APIKeyAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "api-key"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      }
+    },
+    "OAuth2TokenAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "oauth2-token"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      }
+    },
+    "ToolChoice": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "$ref": "#/components/schemas/ToolTypes"
+        },
+        "function": {
+          "$ref": "#/components/schemas/FunctionName"
+        }
+      }
+    },
+    "FunctionName": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "ToolChoiceEnum": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "none",
+        "any",
+        "required"
+      ]
+    },
+    "Prediction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "content"
+        },
+        "content": {
+          "type": "string"
+        }
+      }
+    },
+    "ReasoningEffort": {
+      "type": "string",
+      "enum": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "MistralPromptMode": {
+      "type": "string",
+      "enum": [
+        "reasoning"
+      ]
+    },
+    "GuardrailConfig": {
+      "type": "object",
+      "properties": {
+        "block_on_error": {
+          "type": "boolean"
+        },
+        "moderation_llm_v1": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModerationLLMV1Config"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "moderation_llm_v2": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModerationLLMV2Config"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ModerationLLMV1Config": {
+      "type": "object",
+      "properties": {
+        "model_name": {
+          "type": "string"
+        },
+        "custom_category_thresholds": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModerationLLMV1CategoryThresholds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ignore_other_categories": {
+          "type": "boolean"
+        },
+        "action": {
+          "$ref": "#/components/schemas/ModerationLLMAction"
+        }
+      }
+    },
+    "ModerationLLMV1CategoryThresholds": {
+      "type": "object",
+      "properties": {
+        "sexual": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hate_and_discrimination": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "violence_and_threats": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dangerous_and_criminal_content": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selfharm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "health": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "financial": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "law": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pii": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ModerationLLMAction": {
+      "type": "string",
+      "enum": [
+        "none",
+        "block"
+      ]
+    },
+    "ModerationLLMV2Config": {
+      "type": "object",
+      "properties": {
+        "model_name": {
+          "type": "string"
+        },
+        "custom_category_thresholds": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModerationLLMV2CategoryThresholds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ignore_other_categories": {
+          "type": "boolean"
+        },
+        "action": {
+          "$ref": "#/components/schemas/ModerationLLMAction"
+        }
+      }
+    },
+    "ModerationLLMV2CategoryThresholds": {
+      "type": "object",
+      "properties": {
+        "sexual": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hate_and_discrimination": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "violence_and_threats": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dangerous": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "criminal": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selfharm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "health": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "financial": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "law": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pii": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "jailbreaking": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "RequestedServiceTier": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "standard_only"
+      ]
+    }
+  }
+}

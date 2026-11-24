@@ -53,6 +53,13 @@ func (t *requestTrace) captureRequest(method, endpoint string, headers http.Head
 	t.debug.Request = debugMessage{Method: method, URL: endpoint, Headers: headers.Clone(), Body: string(body)}
 }
 
+func (t *requestTrace) recordDroppedFields(report *requestDropReport) {
+	if report != nil {
+		t.entry.DroppedCount = report.Count
+		t.entry.DroppedFields = append([]droppedRequestField(nil), report.Fields...)
+	}
+}
+
 func (t *requestTrace) captureResponse(status int, headers http.Header, body []byte, complete bool) {
 	if t.debug == nil {
 		return
@@ -246,6 +253,9 @@ func filterRequestLogs(logs []RequestLog, filter logFilter) map[string]any {
 			continue
 		}
 		searchable := strings.ToLower(strings.Join([]string{row.ID, row.Model, row.UpstreamModel, row.KeyLabel, row.KeyMasked, row.Error, row.Thinking, strconv.Itoa(row.HTTPStatus)}, " "))
+		for _, field := range row.DroppedFields {
+			searchable += " " + strings.ToLower(field.Path+" "+field.Value)
+		}
 		if filter.Search != "" && !strings.Contains(searchable, filter.Search) {
 			continue
 		}

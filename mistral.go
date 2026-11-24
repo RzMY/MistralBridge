@@ -68,7 +68,8 @@ func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *reque
 		return nil, nil, &statusError{Status: 404, Message: "Mistral model mapping was not found"}
 	}
 	trace.resolved(key, model, req.Payload)
-	body, headers, err := prepareCompletionRequest(req, key, model, settings.RequestEdit)
+	body, headers, drops, err := prepareCompletionRequest(req, key, model, settings.RequestEdit)
+	trace.recordDroppedFields(drops)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -105,7 +106,8 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 	}
 	trace.resolved(key, model, req.Payload)
 	req.Stream = true
-	body, headers, err := prepareCompletionRequest(req, key, model, settings.RequestEdit)
+	body, headers, drops, err := prepareCompletionRequest(req, key, model, settings.RequestEdit)
+	trace.recordDroppedFields(drops)
 	if err != nil {
 		return nil, err
 	}
@@ -402,8 +404,9 @@ func applyKeyChannel(raw []byte, key apiKey) ([]byte, error) {
 	return json.Marshal(root)
 }
 
-func prepareCompletionRequest(req rpcExecutorRequest, key apiKey, model modelMapping, config *requestEditConfig) ([]byte, http.Header, error) {
-	body, headers, err := editCompletionRequest(req.Payload, req.Headers, config)
+func prepareCompletionRequest(req rpcExecutorRequest, key apiKey, model modelMapping, config *requestEditConfig) ([]byte, http.Header, *requestDropReport, error) {
+	drops := newRequestDropReport(req.Headers, key.Secret)
+	body, headers, err := editCompletionRequestWithReport(req.Payload, req.Headers, config, drops)
 	if err == nil {
 		body, err = transformRequestWithBuiltins(body, model.UpstreamModel, model.ThinkingMap, false)
 	}
@@ -414,7 +417,7 @@ func prepareCompletionRequest(req rpcExecutorRequest, key apiKey, model modelMap
 		body, err = setJSONField(body, "stream", req.Stream)
 	}
 	if err != nil {
-		return nil, nil, &statusError{Status: http.StatusBadRequest, Message: "请求编辑失败：" + err.Error()}
+		return nil, nil, drops, &statusError{Status: http.StatusBadRequest, Message: "请求编辑失败：" + err.Error()}
 	}
 	headers.Set("Authorization", "Bearer "+key.Secret)
 	headers.Set("Content-Type", "application/json")
@@ -422,7 +425,7 @@ func prepareCompletionRequest(req rpcExecutorRequest, key apiKey, model modelMap
 	if req.Stream {
 		headers.Set("Accept", "text/event-stream")
 	}
-	return body, headers, nil
+	return body, headers, drops, nil
 }
 
 func transformRequest(raw []byte, model, thinkingMap string) ([]byte, error) {

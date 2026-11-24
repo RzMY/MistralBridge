@@ -152,7 +152,7 @@ def run(args):
 
     try:
         ready()
-        assert api("/state")["request_edit"] == {"builtin_enabled": True, "rules": []}
+        assert api("/state")["request_edit"] == {"builtin_enabled": True, "auto_drop_incompatible": True, "rules": []}
         passed("legacy state defaults to enabled builtin mappings")
         status, page = http("/v0/resource/plugins/mistral-bridge/console")
         assert status == 200 and "请求编辑".encode() in page and b"requestRuleForm" in page
@@ -202,23 +202,51 @@ def run(args):
         api("/request-edit", {"rules": saved["rules"]}, "PATCH")
         assert chat()["body"]["temperature"] == 0.7
         passed("reordering and individual rule toggles change actual requests")
-        api("/request-edit", {"builtin_enabled": False}, "PATCH")
+        api("/request-edit", {"builtin_enabled": False, "auto_drop_incompatible": False}, "PATCH")
         capture = chat()
         assert capture["body"]["seed"] == 42 and capture["body"]["temperature"] == 0.7
         assert capture["body"]["messages"][0]["role"] == "developer"
         subprocess.run(["docker", "restart", container], check=True, stdout=subprocess.DEVNULL)
         ready()
-        assert not api("/state")["request_edit"]["builtin_enabled"] and chat()["body"]["temperature"] == 0.7
+        assert not api("/state")["request_edit"]["builtin_enabled"] and not api("/state")["request_edit"]["auto_drop_incompatible"] and chat()["body"]["temperature"] == 0.7
         passed("independent builtin switch and custom rules survive a CPA restart")
         before = api("/state")["request_edit"]
         status, _ = http(api_root + "/request-edit", {"rules": [{"name": "invalid auth", "enabled": True, "action": "set", "target": "header", "path": "Authorization", "value_json": '"wrong"'}]}, "PATCH")
         assert status == 400 and api("/state")["request_edit"] == before
         passed("invalid rule is rejected without changing saved configuration")
         bad_parent = {"name": "bad parent", "enabled": True, "action": "set", "target": "body", "path": "/metadata/source/tag", "value_json": '"tag"', "overwrite": True}
-        api("/request-edit", {"builtin_enabled": True, "rules": [bad_parent]}, "PATCH")
+        api("/request-edit", {"builtin_enabled": True, "auto_drop_incompatible": True, "rules": [bad_parent]}, "PATCH")
         chat(expected=400)
         passed("runtime path errors return HTTP 400 before upstream transport")
         api("/request-edit", {"rules": []}, "PATCH")
+
+        # The fallback runs after explicit edits, and stores its own summaries
+        # even when request debugging is disabled.
+        api("/debug", {"enabled": False}, "PATCH")
+        extension = {"client_extension": {"project": "auto-drop", "api_key": "do-not-log"}}
+        for stream in [False, True]:
+            capture = chat(stream, extra=extension)
+            assert "client_extension" not in capture["body"]
+            logs = api("/logs")
+            row = next(row for row in logs["logs"] if row["model"] == "request-edit-test" and row.get("stream", False) == stream)
+            assert row["dropped_count"] == 1 and row["dropped_fields"][0]["path"] == "/client_extension"
+            assert "auto-drop" in row["dropped_fields"][0]["value"] and "do-not-log" not in json.dumps(row)
+            assert not row.get("debug_available")
+            filtered = api("/logs?search=client_extension")
+            assert filtered["total"] >= 1
+            passed("automatic field cleanup and redacted request log without debug, stream=" + str(stream))
+        api("/request-edit", {"auto_drop_incompatible": False}, "PATCH")
+        assert "client_extension" in chat(extra=extension)["body"]
+        api("/request-edit", {"auto_drop_incompatible": True}, "PATCH")
+        rule = {"name": "recover client extension", "enabled": True, "action": "move", "source": "body", "from": "/client_extension", "target": "body", "path": "/metadata/client_extension", "overwrite": True}
+        api("/request-edit", {"rules": [rule]}, "PATCH")
+        assert "client_extension" in chat(extra=extension)["body"]["metadata"]
+        assert not api("/logs")["logs"][0].get("dropped_count")
+        api("/request-edit", {"rules": []}, "PATCH")
+        preview = api("/request-edit/preview", {"body": {"messages": [], "client_extension": "preview"}, "headers": {}}, "POST")
+        assert preview["dropped_count"] == 1 and preview["dropped_fields"][0]["path"] == "/client_extension"
+        passed("independent cleanup toggle, custom mapping priority and discard preview")
+        api("/debug", {"enabled": True}, "PATCH")
 
         if args.live_state:
             live_path = Path(args.live_state).resolve()
@@ -237,7 +265,7 @@ def run(args):
                 created_model = next(m for m in saved_models["models"] if m["client_model"] == "request-edit-real-smoke")
                 publish_models()
                 for stream in [False, True]:
-                    body = {"model": "request-edit-real-smoke", "messages": [{"role": "user", "content": "Reply with only OK."}], "stream": stream, "max_completion_tokens": 16, "seed": 7, "store": False}
+                    body = {"model": "request-edit-real-smoke", "messages": [{"role": "user", "content": "Reply with only OK."}], "stream": stream, "max_completion_tokens": 16, "seed": 7, "store": False, "client_extension": {"project": "real-auto-drop"}}
                     status, response = http("/v1/chat/completions", body, management=False)
                     assert status == 200, f"real upstream stream={stream}: HTTP {status}"
                     if stream:
@@ -247,6 +275,8 @@ def run(args):
                     else:
                         usage = json.loads(response).get("usage")
                     assert usage and usage.get("prompt_tokens", 0) > 0 and usage.get("total_tokens", 0) > 0, "native Mistral usage was not returned"
+                    row = next(row for row in api("/logs")["logs"] if row["model"] == "request-edit-real-smoke" and row.get("stream", False) == stream)
+                    assert row["dropped_count"] == 1 and row["dropped_fields"][0]["path"] == "/client_extension"
                     report.setdefault("real_upstream", []).append({"stream": stream, "http_status": status, "usage": usage})
                     passed("real Mistral completion and native usage, stream=" + str(stream))
             finally:

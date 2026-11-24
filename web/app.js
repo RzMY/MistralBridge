@@ -124,7 +124,8 @@
     snapshot.keys ||= []; snapshot.models ||= []; snapshot.catalog ||= [];
     snapshot.debug_mode = Boolean(snapshot.debug_mode);
     snapshot.proxy_url ||= "";
-    snapshot.request_edit ||= { builtin_enabled: true, rules: [] };
+    snapshot.request_edit ||= { builtin_enabled: true, auto_drop_incompatible: true, rules: [] };
+    snapshot.request_edit.auto_drop_incompatible ??= true;
     snapshot.request_edit.rules ||= [];
     renderRequestEdit();
     renderProxy();
@@ -176,6 +177,9 @@
     const toggle = $("builtinMappingsToggle");
     toggle.setAttribute("aria-checked", String(config.builtin_enabled));
     toggle.querySelector("span:last-child").textContent = config.builtin_enabled ? "已启用" : "已关闭";
+    const dropToggle = $("autoDropToggle");
+    dropToggle.setAttribute("aria-checked", String(config.auto_drop_incompatible));
+    dropToggle.querySelector("span:last-child").textContent = config.auto_drop_incompatible ? "已启用" : "已关闭";
     $("requestRuleCount").textContent = `${config.rules.length} 条规则 · ${config.rules.filter(rule => rule.enabled).length} 条启用`;
     const fieldText = (scope, path) => `<div class="sub">${scope === "header" ? "标头" : "请求体"}</div><span class="mono">${escapeHTML(path)}</span>`;
     $("requestRuleRows").innerHTML = config.rules.length ? config.rules.map((rule, index) => {
@@ -264,6 +268,13 @@
     $(id).innerHTML = `<option value="">${placeholder}</option>` + items.map(([key, label]) => `<option value="${escapeHTML(key)}">${escapeHTML(label)}</option>`).join("");
     if (items.some(([key]) => key === value)) $(id).value = value;
   }
+  function droppedFieldsHTML(log) {
+    if (!log.dropped_count) return "";
+    const fields = Array.isArray(log.dropped_fields) ? log.dropped_fields : [];
+    const items = fields.map(field => `<div class="dropped-field"><code>${escapeHTML(field.path)}</code><div class="sub">${escapeHTML(field.reason || "Mistral schema 不支持此字段")}${field.truncated ? " · 内容已截断" : ""}</div><pre>${escapeHTML(field.value)}</pre></div>`).join("");
+    const remaining = log.dropped_count > fields.length ? `<div class="sub">另有 ${number(log.dropped_count - fields.length)} 项未展示，明细已达到保留上限。</div>` : "";
+    return `<details class="log-dropped"><summary>自动丢弃 ${number(log.dropped_count)} 项</summary>${items}${remaining}</details>`;
+  }
   async function loadLogs() {
     const query = logQuery();
     logsController?.abort();
@@ -292,7 +303,7 @@
       <td class="nowrap">${escapeHTML(new Date(log.created_at).toLocaleDateString("zh-CN"))}<div class="sub">${escapeHTML(new Date(log.created_at).toLocaleTimeString("zh-CN", {hour12:false}))}${log.stream ? " · 流式" : ""}</div></td>
       <td class="mono model-cell">${escapeHTML(log.model)}</td><td class="mono model-cell">${escapeHTML(log.upstream_model || "—")}</td>
       <td><span class="badge">${escapeHTML(log.thinking || "默认")}</span></td>
-      <td><span class="badge ${log.status === "error" ? "error" : "success"}">${log.status === "error" ? "失败" : "成功"}${log.http_status ? ` · ${Number(log.http_status)}` : ""}</span>${log.error ? `<details class="log-error"><summary>错误详情</summary>${escapeHTML(log.error)}</details>` : ""}</td>
+      <td><span class="badge ${log.status === "error" ? "error" : "success"}">${log.status === "error" ? "失败" : "成功"}${log.http_status ? ` · ${Number(log.http_status)}` : ""}</span>${log.error ? `<details class="log-error"><summary>错误详情</summary>${escapeHTML(log.error)}</details>` : ""}${droppedFieldsHTML(log)}</td>
       <td>${escapeHTML(log.key_label || "—")}<div class="sub mono">${escapeHTML(log.key_masked || "")}</div></td>
       <td class="nowrap">${duration(log.first_token_ms)}</td><td class="nowrap">${duration(log.duration_ms)}</td>
       <td class="nowrap">${log.usage_known || log.input_tokens || log.output_tokens ? `${number(log.total_tokens || (log.input_tokens || 0) + (log.output_tokens || 0))}<div class="sub">输入 ${number(log.input_tokens)} · 输出 ${number(log.output_tokens)}</div><div class="sub">缓存 ${log.cached_tokens == null ? "—" : number(log.cached_tokens)}</div>` : "—"}</td>
@@ -481,6 +492,7 @@
   });
   $("resetProxy").addEventListener("click", () => saveProxy(""));
   $("builtinMappingsToggle").addEventListener("click", event => busy(event.currentTarget, () => saveRequestEdit({ builtin_enabled: !snapshot.request_edit.builtin_enabled })));
+  $("autoDropToggle").addEventListener("click", event => busy(event.currentTarget, () => saveRequestEdit({ auto_drop_incompatible: !snapshot.request_edit.auto_drop_incompatible })));
   $("addRequestRule").addEventListener("click", () => openRequestRule());
   ["requestRuleAction", "requestRuleSource", "requestRuleTarget"].forEach(id => $(id).addEventListener("change", updateRequestRuleFields));
   $("requestRuleForm").addEventListener("submit", async event => {

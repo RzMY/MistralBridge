@@ -21,7 +21,7 @@
 <section id="page-requests" data-page="requests" role="tabpanel" aria-labelledby="tab-requests">
 <div class="panel">
 <div class="toolbar">
-<input class="search" id="logSearch" type="search" aria-label="搜索请求日志" placeholder="搜索模型、凭证或错误">
+<input class="search" id="logSearch" type="search" aria-label="搜索请求日志" placeholder="搜索模型、凭证、错误或丢弃字段">
 <select id="logStatus" aria-label="筛选结果"><option value="">全部结果</option><option value="ok">成功</option><option value="error">失败</option></select>
 <select id="logModel" aria-label="筛选请求模型"><option value="">全部模型</option></select>
 <select id="logKey" aria-label="筛选凭证"><option value="">全部凭证</option></select>
@@ -56,7 +56,7 @@
 <section id="page-request-edit" data-page="request-edit" role="tabpanel" aria-labelledby="tab-request-edit" hidden>
 <div class="panel edit-panel">
 <div class="edit-heading"><h2>内置字段映射</h2><button class="switch" id="builtinMappingsToggle" role="switch" aria-checked="true" type="button"><span class="switch-track"></span><span>已启用</span></button></div>
-<p class="hint">默认开启，将常用客户端字段转换为 Mistral 原生格式。显式填写的原生字段优先；关闭此开关后，自定义规则仍会执行。修改后对新请求生效。</p>
+<p class="hint">默认开启，将常用客户端字段转换为 Mistral 原生格式。显式填写的原生字段优先；关闭此开关后，自定义规则和自动丢弃开关仍独立生效。修改后对新请求生效。</p>
 <details class="builtin-details"><summary>查看映射与官方文档</summary><div class="table-wrap"><table class="builtin-table"><thead><tr><th>输入形式</th><th>Mistral 字段 / 行为</th></tr></thead><tbody>
 <tr><td class="mono">max_completion_tokens / max_output_tokens / maxOutputTokens</td><td class="mono">max_tokens</td></tr>
 <tr><td class="mono">seed</td><td class="mono">random_seed</td></tr>
@@ -69,13 +69,18 @@
 </tbody></table></div><p class="hint">相同名称的工具参数和 metadata 不受影响。完整消息协议由 CPA 转换。<a href="https://docs.mistral.ai/api/endpoint/chat" target="_blank" rel="noopener noreferrer">Mistral Chat API</a> · <a href="https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create" target="_blank" rel="noopener noreferrer">OpenAI Chat API</a> · <a href="https://platform.claude.com/docs/en/api/messages/create" target="_blank" rel="noopener noreferrer">Claude Messages API</a> · <a href="https://ai.google.dev/api/generate-content" target="_blank" rel="noopener noreferrer">Gemini API</a></p></details>
 </div>
 <div class="panel edit-panel">
+<div class="edit-heading"><h2>自动丢弃不兼容字段</h2><button class="switch" id="autoDropToggle" role="switch" aria-checked="true" type="button" aria-label="自动丢弃不兼容字段"><span class="switch-track"></span><span>已启用</span></button></div>
+<p class="hint">默认开启。在内置映射和自定义规则执行后，清理 Mistral schema 不接受的多余 JSON 字段，覆盖请求顶层、消息、内容块、工具和输出格式。metadata、工具参数 schema 和调用参数保留。</p>
+<p class="hint">请求日志会提示自动丢弃的数量、路径和值摘要，无需开启调试模式。密钥类内容会脱敏，过长内容会截断。关闭此开关可透传自定义上游的扩展字段。</p>
+</div>
+<div class="panel edit-panel">
 <div class="edit-heading"><h2>自定义字段规则</h2><div class="actions"><span class="count" id="requestRuleCount">0 条规则</span><button class="btn btn-primary" id="addRequestRule" type="button">＋ 添加规则</button></div></div>
 <p class="hint">内置映射之后，按列表顺序编辑请求体或标头。输入标头可作为规则来源，只有规则明确设置或复制的标头才会发往上游。</p>
 <div class="table-wrap"><table class="edit-rule-table"><thead><tr><th>顺序</th><th>规则 / 操作</th><th>来源 / 设置值</th><th>目标</th><th>状态</th><th>操作</th></tr></thead><tbody id="requestRuleRows"></tbody></table></div>
 <p class="hint">请求体路径使用 JSON Pointer，例如 <span class="mono">/metadata/project</span>、<span class="mono">/messages/0/content</span>。<span class="mono">*</span> 匹配现有对象或数组的每个成员；<span class="mono">~0</span> 表示 ~，<span class="mono">~1</span> 表示 /。模型、stream 和鉴权及传输标头由插件管理。</p>
 </div>
 <details class="panel edit-panel preview-panel"><summary>预览请求编辑</summary>
-<p class="hint">使用已保存的开关与规则预览，不调用上游。实际发送时还会应用模型映射、凭证和使用渠道。</p>
+<p class="hint">使用已保存的开关与规则预览，包含自动丢弃的字段明细，不调用上游。实际发送时还会应用模型映射、凭证和使用渠道。</p>
 <form id="requestPreviewForm"><div class="edit-columns">
 <div class="field"><label for="previewRequestBody">输入请求体（JSON）</label><textarea id="previewRequestBody" rows="10" spellcheck="false" required>{
   "model": "mistral-small",

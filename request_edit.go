@@ -18,8 +18,9 @@ const (
 )
 
 type requestEditConfig struct {
-	BuiltinEnabled bool              `json:"builtin_enabled"`
-	Rules          []requestEditRule `json:"rules"`
+	BuiltinEnabled       bool              `json:"builtin_enabled"`
+	AutoDropIncompatible *bool             `json:"auto_drop_incompatible,omitempty"`
+	Rules                []requestEditRule `json:"rules"`
 }
 
 type requestEditRule struct {
@@ -38,6 +39,8 @@ type requestEditRule struct {
 
 func cloneRequestEdit(config *requestEditConfig) *requestEditConfig {
 	copy := &requestEditConfig{BuiltinEnabled: true, Rules: []requestEditRule{}}
+	enabled := autoDropEnabled(config)
+	copy.AutoDropIncompatible = &enabled
 	if config != nil {
 		copy.BuiltinEnabled = config.BuiltinEnabled
 		for _, rule := range config.Rules {
@@ -50,11 +53,12 @@ func cloneRequestEdit(config *requestEditConfig) *requestEditConfig {
 
 func updateRequestEdit(raw []byte) ([]byte, error) {
 	var input struct {
-		BuiltinEnabled *bool              `json:"builtin_enabled"`
-		Rules          *[]requestEditRule `json:"rules"`
+		BuiltinEnabled       *bool              `json:"builtin_enabled"`
+		AutoDropIncompatible *bool              `json:"auto_drop_incompatible"`
+		Rules                *[]requestEditRule `json:"rules"`
 	}
-	if len(raw) > 1024*1024 || decodeEditJSON(raw, &input) != nil || (input.BuiltinEnabled == nil && input.Rules == nil) {
-		return managementJSONStatus(http.StatusBadRequest, map[string]string{"error": "请提供内置映射开关或自定义规则列表"})
+	if len(raw) > 1024*1024 || decodeEditJSON(raw, &input) != nil || (input.BuiltinEnabled == nil && input.AutoDropIncompatible == nil && input.Rules == nil) {
+		return managementJSONStatus(http.StatusBadRequest, map[string]string{"error": "请提供内置映射、自动丢弃开关或自定义规则列表"})
 	}
 	if input.Rules != nil {
 		if err := validateRequestEditRules(*input.Rules); err != nil {
@@ -65,6 +69,9 @@ func updateRequestEdit(raw []byte) ([]byte, error) {
 		config := cloneRequestEdit(state.RequestEdit)
 		if input.BuiltinEnabled != nil {
 			config.BuiltinEnabled = *input.BuiltinEnabled
+		}
+		if input.AutoDropIncompatible != nil {
+			config.AutoDropIncompatible = input.AutoDropIncompatible
 		}
 		if input.Rules != nil {
 			config.Rules = *input.Rules
@@ -613,6 +620,10 @@ func setBuiltinDefault(root map[string]json.RawMessage, field string, value json
 }
 
 func editCompletionRequest(raw []byte, incoming http.Header, config *requestEditConfig) ([]byte, http.Header, error) {
+	return editCompletionRequestWithReport(raw, incoming, config, newRequestDropReport(incoming, ""))
+}
+
+func editCompletionRequestWithReport(raw []byte, incoming http.Header, config *requestEditConfig, report *requestDropReport) ([]byte, http.Header, error) {
 	settings := cloneRequestEdit(config)
 	if err := validateRequestEditRules(settings.Rules); err != nil {
 		return nil, nil, err
@@ -621,7 +632,11 @@ func editCompletionRequest(raw []byte, incoming http.Header, config *requestEdit
 	if err != nil {
 		return nil, nil, err
 	}
-	return applyCustomRequestRules(body, incoming, settings.Rules)
+	body, headers, err := applyCustomRequestRules(body, incoming, settings.Rules)
+	if err == nil && autoDropEnabled(settings) {
+		body, err = dropIncompatibleRequestFields(body, report)
+	}
+	return body, headers, err
 }
 
 func previewRequestEdit(raw []byte) ([]byte, error) {
@@ -644,7 +659,8 @@ func previewRequestEdit(raw []byte) ([]byte, error) {
 		}
 		headers[name] = values
 	}
-	body, editedHeaders, err := editCompletionRequest(input.Body, headers, currentState().RequestEdit)
+	report := newRequestDropReport(headers, "")
+	body, editedHeaders, err := editCompletionRequestWithReport(input.Body, headers, currentState().RequestEdit, report)
 	if err != nil {
 		return managementJSONStatus(400, map[string]string{"error": err.Error()})
 	}
@@ -655,7 +671,7 @@ func previewRequestEdit(raw []byte) ([]byte, error) {
 	if bytes.Equal(bytes.TrimSpace(content["stream"]), []byte("true")) {
 		editedHeaders.Set("Accept", "text/event-stream")
 	}
-	result, err := json.MarshalIndent(map[string]any{"body": json.RawMessage(body), "headers": editedHeaders}, "", "  ")
+	result, err := json.MarshalIndent(map[string]any{"body": json.RawMessage(body), "headers": editedHeaders, "dropped_count": report.Count, "dropped_fields": report.Fields}, "", "  ")
 	if err != nil {
 		return nil, err
 	}

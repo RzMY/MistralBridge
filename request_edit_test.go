@@ -83,7 +83,8 @@ func TestRequestEditBuiltinAliasesNativePrecedenceAndIsolation(t *testing.T) {
 		t.Fatal("message mapping did not respect Mistral's message schemas")
 	}
 	// Disabling only the builtin mapper keeps client fields and message shapes.
-	body, _, err = editCompletionRequest([]byte(input), nil, &requestEditConfig{BuiltinEnabled: false})
+	disabled := false
+	body, _, err = editCompletionRequest([]byte(input), nil, &requestEditConfig{BuiltinEnabled: false, AutoDropIncompatible: &disabled})
 	if err != nil {
 		t.Fatal(err)
 	}

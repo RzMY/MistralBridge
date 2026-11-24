@@ -70,26 +70,28 @@ type modelMapping struct {
 }
 
 type RequestLog struct {
-	ID             string    `json:"id"`
-	Model          string    `json:"model"`
-	UpstreamModel  string    `json:"upstream_model,omitempty"`
-	Thinking       string    `json:"thinking,omitempty"`
-	KeyID          string    `json:"key_id,omitempty"`
-	KeyLabel       string    `json:"key_label,omitempty"`
-	KeyMasked      string    `json:"key_masked,omitempty"`
-	Stream         bool      `json:"stream,omitempty"`
-	FirstTokenMS   *int64    `json:"first_token_ms,omitempty"`
-	CachedTokens   *int      `json:"cached_tokens,omitempty"`
-	TotalTokens    int       `json:"total_tokens,omitempty"`
-	UsageKnown     bool      `json:"usage_known,omitempty"`
-	Error          string    `json:"error,omitempty"`
-	Status         string    `json:"status"`
-	HTTPStatus     int       `json:"http_status,omitempty"`
-	DebugAvailable bool      `json:"debug_available,omitempty"`
-	DurationMS     int64     `json:"duration_ms"`
-	InputTokens    int       `json:"input_tokens,omitempty"`
-	OutputTokens   int       `json:"output_tokens,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             string                `json:"id"`
+	Model          string                `json:"model"`
+	UpstreamModel  string                `json:"upstream_model,omitempty"`
+	Thinking       string                `json:"thinking,omitempty"`
+	KeyID          string                `json:"key_id,omitempty"`
+	KeyLabel       string                `json:"key_label,omitempty"`
+	KeyMasked      string                `json:"key_masked,omitempty"`
+	Stream         bool                  `json:"stream,omitempty"`
+	FirstTokenMS   *int64                `json:"first_token_ms,omitempty"`
+	CachedTokens   *int                  `json:"cached_tokens,omitempty"`
+	TotalTokens    int                   `json:"total_tokens,omitempty"`
+	UsageKnown     bool                  `json:"usage_known,omitempty"`
+	Error          string                `json:"error,omitempty"`
+	Status         string                `json:"status"`
+	HTTPStatus     int                   `json:"http_status,omitempty"`
+	DebugAvailable bool                  `json:"debug_available,omitempty"`
+	DroppedCount   int                   `json:"dropped_count,omitempty"`
+	DroppedFields  []droppedRequestField `json:"dropped_fields,omitempty"`
+	DurationMS     int64                 `json:"duration_ms"`
+	InputTokens    int                   `json:"input_tokens,omitempty"`
+	OutputTokens   int                   `json:"output_tokens,omitempty"`
+	CreatedAt      time.Time             `json:"created_at"`
 }
 
 type pluginState struct {

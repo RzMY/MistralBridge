@@ -1,6 +1,6 @@
 # 请求编辑
 
-在控制台的 **请求编辑** 页面配置输入标头和请求体。配置保存后立即用于新请求，普通与流式请求共用同一流程。旧版本的状态无需手动迁移，**内置字段映射**默认开启，自定义规则列表为空。
+在控制台的 **请求编辑** 页面配置输入标头和请求体。配置保存后立即用于新请求，普通与流式请求共用同一流程。旧版本的状态无需手动迁移，**内置字段映射**和**自动丢弃不兼容字段**默认开启，自定义规则列表为空。
 
 ## 内置字段对照
 
@@ -23,7 +23,21 @@
 
 这些映射对齐兼容的生成参数。完整 Claude、Responses、Gemini 消息协议由 CPA 转换，规则处理的是 CPA 交给执行器的 Chat 请求体。例如 Responses 请求应使用转换后的 `/messages` 路径；CPA 未传递的原始扩展字段不能作为规则来源，可通过设置值或输入标头补充。思考预算、供应商服务等级等没有直接等价语义的字段不会推测转换。
 
-关闭 **内置字段映射** 会停止上述兼容转换，自定义规则继续运行。模型路由、模型配置中的思考强度映射、使用渠道和鉴权仍按插件配置应用。
+关闭 **内置字段映射** 会停止上述兼容转换，自定义规则和自动丢弃开关仍独立生效。模型路由、模型配置中的思考强度映射、使用渠道和鉴权仍按插件配置应用。
+
+## 自动丢弃不兼容字段
+
+**自动丢弃不兼容字段**默认开启。在内置映射和全部自定义规则之后，按照内置的官方 Mistral 请求 schema 移除仍然存在的多余 JSON 字段，减少 `extra_forbidden` 导致的 HTTP 422。自定义规则可以先把客户端扩展字段移动或复制到 Mistral 支持的位置，例如 `/metadata/client_tag`；复制后留在原位置的不兼容字段仍会丢弃。
+
+检查范围包括请求顶层、各角色消息、已知内容块及多模态子对象、工具定义和调用外壳、`tool_choice`、`response_format` 等明确声明 `additionalProperties: false` 的对象。metadata、工具的 `parameters`、函数调用的 `arguments` 和输出 JSON Schema 内的任意业务字段保留。未知角色或内容类型、已知字段的值类型和取值范围交由上游校验，不会猜测修改或删除完整消息。
+
+此开关独立于内置映射。关闭内置映射但保持自动丢弃开启时，`seed` 等没有被转换的非原生字段也会被丢弃；自定义上游需要扩展字段时，可关闭自动丢弃开关。
+
+请求日志在结果列显示 **自动丢弃 N 项**，展开可查看该步骤删除的字段路径、原因和值摘要，支持按路径或值搜索。成功、失败、普通和流式请求均记录，无需开启调试模式。预览也返回相同明细。已有内置映射中的删除和用户主动配置的删除不计入此步骤。
+
+丢弃内容中的密钥类字段、当前上游 Key 和输入认证标头值会脱敏。每条日志最多保留 64 项明细、每个值最多约 2 KiB，整体摘要约 16 KiB；超限时保留实际总数并标记截断或未展示数量。长文本按 UTF-8 边界截断，整数值按原精度显示。
+
+字段定义来自 [Mistral 官方 OpenAPI](https://docs.mistral.ai/openapi.yaml)，作为 `request_schema.json` 编译进插件，请求处理时不联网。维护者可安装 PyYAML 后运行 `python scripts/update_request_schema.py` 更新字段投影；文件记录来源、读取日期和原始 schema 的 SHA-256。
 
 ## 自定义规则
 
@@ -63,14 +77,21 @@
 
 | 方法与路径 | 行为 |
 | --- | --- |
-| `GET /state` | 返回 `request_edit: {builtin_enabled, rules}` |
-| `PATCH /request-edit` | 独立更新开关，或替换整个有序规则列表 |
-| `POST /request-edit/preview` | 接收 `body` JSON 对象与 `headers` 对象，返回编辑后的两者 |
+| `GET /state` | 返回 `request_edit: {builtin_enabled, auto_drop_incompatible, rules}` |
+| `PATCH /request-edit` | 独立更新任一开关，或替换整个有序规则列表 |
+| `POST /request-edit/preview` | 接收 `body` JSON 对象与 `headers` 对象，返回编辑结果及 `dropped_count`、`dropped_fields` |
+| `GET /logs` | 日志中的 `dropped_count`、`dropped_fields` 表示本次自动清理，明细含 `path`、`value`、`reason`、`truncated` |
 
 关闭内置映射且保留已有规则：
 
 ```json
 {"builtin_enabled": false}
+```
+
+关闭自动丢弃且保留内置映射与已有规则：
+
+```json
+{"auto_drop_incompatible": false}
 ```
 
 替换自定义规则列表且保留内置开关：

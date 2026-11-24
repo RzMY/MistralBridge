@@ -61,6 +61,10 @@ tbody tr:hover { background:color-mix(in srgb,var(--soft) 55%,transparent); }
 .badge.error { color:var(--danger); background:color-mix(in srgb,var(--danger) 9%,transparent); }
 .error-text { color:var(--danger); }
 .log-error { max-width:180px; margin-top:5px; font-size:11px; overflow-wrap:anywhere; }
+.log-dropped { margin-top:6px; min-width:125px; max-width:320px; font-size:11px; white-space:normal; overflow-wrap:anywhere; }
+.log-dropped>summary { color:var(--warning); cursor:pointer; }
+.dropped-field { padding-top:8px; }
+.dropped-field pre { max-height:150px; margin:4px 0; padding:7px; overflow:auto; border:1px solid var(--line); border-radius:5px; background:var(--soft); font:11px/1.5 Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
 .empty { text-align:center; padding:58px 16px; color:var(--muted); }
 .empty strong { display:block; color:var(--ink); margin-bottom:6px; font-size:13px; }
 .pager { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:12px; padding:18px 0; color:var(--muted); font-size:12px; }

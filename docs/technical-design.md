@@ -65,7 +65,11 @@ flowchart LR
 
 ## 请求转换
 
-执行器只处理 OpenAI Chat Completions 格式。`request_edit.go` 提供输入标头与请求体的编辑模块，配置保存在 `state.json` 的 `request_edit` 中；旧状态和首次安装默认开启内置映射，自定义规则为空。普通和流式请求通过 `prepareCompletionRequest` 使用同一配置快照，先执行内置映射、再顺序执行自定义规则，最后应用模型、思考映射、使用渠道、凭证与请求模式。详细字段对照和规则 API 见[请求编辑说明](request-edit.md)。
+执行器只处理 OpenAI Chat Completions 格式。`request_edit.go` 提供输入标头与请求体的编辑模块，配置保存在 `state.json` 的 `request_edit` 中；旧状态和首次安装默认开启内置映射及 `auto_drop_incompatible`，自定义规则为空。普通和流式请求通过 `prepareCompletionRequest` 使用同一配置快照，先执行内置映射、再顺序执行自定义规则，然后清理剩余不兼容字段，最后应用模型、思考映射、使用渠道、凭证与请求模式。详细字段对照和规则 API 见[请求编辑说明](request-edit.md)。
+
+`request_filter.go` 使用编译进动态库的 `request_schema.json` 字段投影清理明确禁止额外属性的对象，按 discriminator 选择已知消息、内容块和工具类型。开放对象和不明确的分支保持原内容，不将字段清理当作值校验。投影由 `scripts/update_request_schema.py` 从官方 OpenAPI 生成，不引入运行时依赖。`auto_drop_incompatible` 缺省或 `null` 时按开启处理，显式 `false` 持久化后重载保持关闭。
+
+自动清理生成 `dropped_count` 和 `dropped_fields`，通过请求 trace 写入普通日志，即使调试模式关闭也保留。明细记录 JSON Pointer 路径、原因和值摘要；认证内容先脱敏，再按数量和字节限制截断。查询支持路径和值搜索，预览返回同一清理报告。原始请求、完整提示词不因该功能整体写入普通日志。
 
 每条消息的 OpenAI `developer` 角色会转换为 Mistral 支持的 `system` 角色，消息内容和顺序保留。转换在插件执行器中完成，同时覆盖 Chat Completions 入口与 CPA 转换后的 Responses 请求，以及流式和非流式调用；工具参数 schema、工具调用参数与 metadata 内的同名文本不受影响。Mistral 不支持 `developer` 角色，直接透传会触发 `body.messages[i]` 的 `union_tag_invalid` 和 HTTP 422。
 
