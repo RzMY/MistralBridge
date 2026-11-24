@@ -57,7 +57,7 @@ func TestTransformRequestDSHChatOptions(t *testing.T) {
 		{
 			name:  "streaming request from DSH debug logs",
 			input: `{"model":"alias","store":false,"max_completion_tokens":64,"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"system","content":"System"},{"role":"user","content":"Hello"}]}`,
-			want:  `{"model":"upstream","max_tokens":64,"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"system","content":"System"},{"role":"user","content":"Hello"}]}`,
+			want:  `{"model":"upstream","max_tokens":64,"stream":true,"messages":[{"role":"system","content":"System"},{"role":"user","content":"Hello"}]}`,
 		},
 		{
 			name:  "non-streaming tool request keeps nested store fields",
@@ -108,7 +108,7 @@ func TestTransformRequestStripsContentCacheHints(t *testing.T) {
 		{
 			name:  "text request from debug logs",
 			input: `{"model":"alias","max_tokens":1024,"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"system","content":"System"},{"role":"user","content":[{"type":"text","text":"Hello","cache_control":{"type":"ephemeral"}}]}]}`,
-			want:  `{"model":"upstream","max_tokens":1024,"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"system","content":"System"},{"role":"user","content":[{"type":"text","text":"Hello"}]}]}`,
+			want:  `{"model":"upstream","max_tokens":1024,"stream":true,"messages":[{"role":"system","content":"System"},{"role":"user","content":[{"type":"text","text":"Hello"}]}]}`,
 		},
 		{
 			name:  "mixed content and tool schema",

@@ -65,13 +65,15 @@ flowchart LR
 
 ## 请求转换
 
-执行器只处理 OpenAI Chat Completions 格式。插件使用匹配到的映射覆盖请求体中的 `model`，保留其余未转换字段，并按需要改写思考字段。
+执行器只处理 OpenAI Chat Completions 格式。`request_edit.go` 提供输入标头与请求体的编辑模块，配置保存在 `state.json` 的 `request_edit` 中；旧状态和首次安装默认开启内置映射，自定义规则为空。普通和流式请求通过 `prepareCompletionRequest` 使用同一配置快照，先执行内置映射、再顺序执行自定义规则，最后应用模型、思考映射、使用渠道、凭证与请求模式。详细字段对照和规则 API 见[请求编辑说明](request-edit.md)。
 
 每条消息的 OpenAI `developer` 角色会转换为 Mistral 支持的 `system` 角色，消息内容和顺序保留。转换在插件执行器中完成，同时覆盖 Chat Completions 入口与 CPA 转换后的 Responses 请求，以及流式和非流式调用；工具参数 schema、工具调用参数与 metadata 内的同名文本不受影响。Mistral 不支持 `developer` 角色，直接透传会触发 `body.messages[i]` 的 `union_tag_invalid` 和 HTTP 422。
 
 消息 `content` 数组中各内容块的 `cache_control` 会在发送前移除。该客户端缓存提示字段不属于 Mistral 内容块 schema，透传会触发 HTTP 422。文本、多模态内容和工具参数 schema 保留。
 
-OpenAI 请求顶层的 `store` 会移除，包括 DSH chat 协议默认发送的 `store: false`；Mistral 不支持该字段，关闭存储也会触发 HTTP 422。`max_completion_tokens` 转换为 Mistral 的 `max_tokens`，已有非空 `max_tokens` 时优先保留原值，空的 `max_completion_tokens` 不发送。工具参数 schema 与 metadata 内同名字段不受影响。
+开启内置映射时，OpenAI 请求顶层的 `store`、`stream_options`、`user`、`logit_bias`、`prompt_cache_retention`、`safety_identifier` 会移除；这些字段不在 Mistral 原生请求 schema 中。`max_completion_tokens`、`max_output_tokens` 等别名转换为 `max_tokens`，`seed` 转为 `random_seed`，停止序列和 Gemini 采样参数映射到对应原生字段。已有非空原生字段优先。工具参数 schema 与 metadata 内同名字段不受影响。关闭内置开关后这些转换及角色、消息附加字段的兼容处理停止，自定义规则继续生效。
+
+自定义规则支持 body/header 之间的复制或移动，以及设置 JSON 值、删除字段和通配符路径。标头名称大小写不敏感；输入标头只用于取值，输出仅包含规则明确写入的标头与执行器标准标头。规则保存前校验路径、操作、JSON 值及标头合法性，不能改写 model、stream、鉴权或传输标头。运行时路径类型不匹配返回 HTTP 400 和规则定位信息，不发送上游请求。设置值以 `value_json` 字符串持久化，避免浏览器处理 64 位整数时失去精度。
 
 ### 思考字段
 
@@ -83,7 +85,7 @@ OpenAI 请求顶层的 `store` 会移除，包括 DSH chat 协议默认发送的
 
 非流式请求通过统一 HTTP 分派发送到凭证 API 地址下的 `/chat/completions`。配置独立代理时使用插件 HTTP Transport，否则调用 `host.http.do`。插件读取原始响应体并规范化后返回 CPA。
 
-流式请求根据配置通过插件 HTTP Transport 或 `host.http.do_stream` 打开上游流。插件确保请求中的 `stream` 为 `true`，并在 `stream_options` 中设置 `include_usage: true`。上游数据由本地响应体或 `host.http.stream_read` 分块读取，插件逐行规范化 SSE 事件，再通过 `host.stream.emit` 传给 CPA。客户端断开时，普通模式结束读取；调试模式会继续读取上游以保存完整响应。流关闭时释放响应体和请求上下文。
+流式请求根据配置通过插件 HTTP Transport 或 `host.http.do_stream` 打开上游流。插件确保请求中的 `stream` 为 `true`；默认内置映射移除 OpenAI 的 `stream_options`，使用 Mistral 原生流式 usage。上游数据由本地响应体或 `host.http.stream_read` 分块读取，插件逐行规范化 SSE 事件，再通过 `host.stream.emit` 传给 CPA。客户端断开时，普通模式结束读取；调试模式会继续读取上游以保存完整响应。流关闭时释放响应体和请求上下文。
 
 ### 响应规范化
 
@@ -110,6 +112,8 @@ OpenAI 请求顶层的 `store` 会移除，包括 DSH chat 协议默认发送的
 | 方法和路径 | 行为 |
 | --- | --- |
 | `GET /state` | 返回凭证掩码、模型目录、映射和 revision |
+| `PATCH /request-edit` | 独立更新内置映射开关或替换有序自定义规则，保存失败回滚 |
+| `POST /request-edit/preview` | 使用当前配置预览输入标头和请求体，不调用上游 |
 | `POST /keys`、`PATCH /keys` | 添加或编辑凭证 |
 | `POST /keys/test`、`POST /keys/quota` | 测试凭证或刷新额度 |
 | `PATCH /keys/channel` | 持久化渠道切换，保留凭证其他设置、创建来源与双池额度 |
@@ -128,7 +132,7 @@ OpenAI 请求顶层的 `store` 会移除，包括 DSH chat 协议默认发送的
 
 | 文件或目录 | 内容和限制 |
 | --- | --- |
-| `state.json` | 凭证、模型目录、模型映射和调试模式设置 |
+| `state.json` | 凭证、模型目录、模型映射、调试模式、代理和请求编辑设置 |
 | `requests.jsonl` | 请求元数据，内存和磁盘最多保留 10,000 条，文件超过 16 MiB 时压缩到保留集 |
 | `debug-logs/<id>.json` | 单条调试交换记录，最多保留 100 条，总量最多 256 MiB |
 

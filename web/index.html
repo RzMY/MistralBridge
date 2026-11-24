@@ -14,6 +14,7 @@
 <button id="tab-requests" type="button" role="tab" data-view="requests" aria-controls="page-requests" aria-selected="true"><span class="nav-icon" aria-hidden="true">▤</span>请求日志</button>
 <button id="tab-keys" type="button" role="tab" data-view="keys" aria-controls="page-keys" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">⚿</span>凭证管理</button>
 <button id="tab-models" type="button" role="tab" data-view="models" aria-controls="page-models" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">⇄</span>模型映射</button>
+<button id="tab-request-edit" type="button" role="tab" data-view="request-edit" aria-controls="page-request-edit" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">✎</span>请求编辑</button>
 <button id="tab-proxy" type="button" role="tab" data-view="proxy" aria-controls="page-proxy" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">↗</span>代理设置</button>
 </nav>
 <div id="pageError" class="notice hidden" role="alert"></div>
@@ -52,6 +53,43 @@
 <div class="toolbar"><span class="count" id="selectionCount">已选 0 项</span><button class="btn small" id="enableSelected" type="button" disabled>启用选中</button><button class="btn small" id="disableSelected" type="button" disabled>禁用选中</button></div>
 <div class="table-wrap"><table class="model-table"><thead><tr><th><input id="selectModels" type="checkbox" aria-label="选择当前筛选的全部模型"></th><th>请求模型</th><th>上游模型</th><th>思考强度映射</th><th>凭证</th><th>状态</th><th></th></tr></thead><tbody id="modelRows"></tbody></table></div><p class="hint" id="catalogHint">拉取目录后，添加需要使用的映射。客户端使用“请求模型”名称。</p>
 </section>
+<section id="page-request-edit" data-page="request-edit" role="tabpanel" aria-labelledby="tab-request-edit" hidden>
+<div class="panel edit-panel">
+<div class="edit-heading"><h2>内置字段映射</h2><button class="switch" id="builtinMappingsToggle" role="switch" aria-checked="true" type="button"><span class="switch-track"></span><span>已启用</span></button></div>
+<p class="hint">默认开启，将常用客户端字段转换为 Mistral 原生格式。显式填写的原生字段优先；关闭此开关后，自定义规则仍会执行。修改后对新请求生效。</p>
+<details class="builtin-details"><summary>查看映射与官方文档</summary><div class="table-wrap"><table class="builtin-table"><thead><tr><th>输入形式</th><th>Mistral 字段 / 行为</th></tr></thead><tbody>
+<tr><td class="mono">max_completion_tokens / max_output_tokens / maxOutputTokens</td><td class="mono">max_tokens</td></tr>
+<tr><td class="mono">seed</td><td class="mono">random_seed</td></tr>
+<tr><td class="mono">stop_sequences / stopSequences</td><td class="mono">stop</td></tr>
+<tr><td class="mono">topP / topK</td><td class="mono">top_p / top_k</td></tr>
+<tr><td class="mono">reasoning.effort</td><td><span class="mono">reasoning_effort</span>；移除 Responses 的 <span class="mono">reasoning.summary</span></td></tr>
+<tr><td class="mono">generationConfig</td><td>映射 maxOutputTokens、temperature、topP、topK、stopSequences、seed、candidateCount，原生字段优先</td></tr>
+<tr><td>消息角色与思考内容</td><td>developer → system；assistant 思考字段 → thinking 内容块</td></tr>
+<tr><td>Mistral 不支持的附加字段</td><td>移除顶层 store、stream_options、user、logit_bias、prompt_cache_retention、safety_identifier；移除内容块 cache_control、非工具消息 name 和 assistant.refusal</td></tr>
+</tbody></table></div><p class="hint">相同名称的工具参数和 metadata 不受影响。完整消息协议由 CPA 转换。<a href="https://docs.mistral.ai/api/endpoint/chat" target="_blank" rel="noopener noreferrer">Mistral Chat API</a> · <a href="https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create" target="_blank" rel="noopener noreferrer">OpenAI Chat API</a> · <a href="https://platform.claude.com/docs/en/api/messages/create" target="_blank" rel="noopener noreferrer">Claude Messages API</a> · <a href="https://ai.google.dev/api/generate-content" target="_blank" rel="noopener noreferrer">Gemini API</a></p></details>
+</div>
+<div class="panel edit-panel">
+<div class="edit-heading"><h2>自定义字段规则</h2><div class="actions"><span class="count" id="requestRuleCount">0 条规则</span><button class="btn btn-primary" id="addRequestRule" type="button">＋ 添加规则</button></div></div>
+<p class="hint">内置映射之后，按列表顺序编辑请求体或标头。输入标头可作为规则来源，只有规则明确设置或复制的标头才会发往上游。</p>
+<div class="table-wrap"><table class="edit-rule-table"><thead><tr><th>顺序</th><th>规则 / 操作</th><th>来源 / 设置值</th><th>目标</th><th>状态</th><th>操作</th></tr></thead><tbody id="requestRuleRows"></tbody></table></div>
+<p class="hint">请求体路径使用 JSON Pointer，例如 <span class="mono">/metadata/project</span>、<span class="mono">/messages/0/content</span>。<span class="mono">*</span> 匹配现有对象或数组的每个成员；<span class="mono">~0</span> 表示 ~，<span class="mono">~1</span> 表示 /。模型、stream 和鉴权及传输标头由插件管理。</p>
+</div>
+<details class="panel edit-panel preview-panel"><summary>预览请求编辑</summary>
+<p class="hint">使用已保存的开关与规则预览，不调用上游。实际发送时还会应用模型映射、凭证和使用渠道。</p>
+<form id="requestPreviewForm"><div class="edit-columns">
+<div class="field"><label for="previewRequestBody">输入请求体（JSON）</label><textarea id="previewRequestBody" rows="10" spellcheck="false" required>{
+  "model": "mistral-small",
+  "messages": [{"role": "user", "content": "你好"}],
+  "max_completion_tokens": 128,
+  "seed": 42
+}</textarea></div>
+<div class="field"><label for="previewRequestHeaders">输入标头（JSON 对象）</label><textarea id="previewRequestHeaders" rows="10" spellcheck="false" required>{
+  "X-Client-Tag": "example"
+}</textarea><small>值可填写字符串或字符串数组，例如 ["a", "b"]。</small></div>
+</div><p id="requestPreviewError" class="form-error" role="alert"></p><div class="preview-actions"><button class="btn" type="submit">预览编辑结果</button></div></form>
+<pre id="requestPreviewOutput" class="debug-output preview-output hidden" tabindex="0" aria-label="请求编辑预览"></pre>
+</details>
+</section>
 <section id="page-proxy" data-page="proxy" role="tabpanel" aria-labelledby="tab-proxy" hidden>
 <form id="proxyForm" class="panel proxy-panel">
 <div class="proxy-heading"><h2>独立代理</h2><span class="badge" id="proxyStatus">沿用 CPA 配置</span></div>
@@ -64,6 +102,19 @@
 </div>
 <dialog id="keyDialog"><form id="keyForm"><div class="dialog-head"><h2 id="keyDialogTitle">添加凭证</h2><button type="button" class="x-button" data-close="keyDialog" aria-label="关闭">×</button></div><div class="dialog-body"><input id="keyId" type="hidden"><div class="field"><label for="keyLabel">名称</label><input id="keyLabel" maxlength="64" placeholder="例如 生产环境" required></div><div class="field"><label for="apiSecret">Mistral API Key</label><input id="apiSecret" type="password" autocomplete="new-password" required placeholder="粘贴 API Key"><small id="secretHint">保存后仅显示密钥尾号。</small></div><div class="field"><label for="baseUrl">API 地址</label><input id="baseUrl" type="url" value="https://api.mistral.ai/v1" required spellcheck="false"></div><div class="field"><label for="keyChannel">使用渠道</label><select id="keyChannel"><option value="auto">按 Key 创建来源（默认）</option><option value="vibe">Vibe 额度池</option><option value="studio">Studio / API 额度池</option></select><small>创建来源与使用渠道独立，切换后新请求生效。</small></div><div class="field"><label for="keyPriority">优先级</label><input id="keyPriority" type="number" min="-1000" max="1000" step="1" value="0" required><small>数值越大越优先，同优先级轮询。</small></div><p id="keyError" class="form-error" role="alert"></p></div><div class="dialog-actions"><button class="btn" type="button" data-close="keyDialog">取消</button><button class="btn btn-primary" type="submit">保存凭证</button></div></form></dialog>
 <dialog id="modelDialog"><form id="modelForm"><div class="dialog-head"><h2 id="modelDialogTitle">添加模型映射</h2><button type="button" class="x-button" data-close="modelDialog" aria-label="关闭">×</button></div><div class="dialog-body"><input id="mappingId" type="hidden"><div class="field"><label for="upstreamModel">上游模型</label><input id="upstreamModel" list="catalogOptions" required placeholder="选择目录中的模型或输入 ID"><datalist id="catalogOptions"></datalist></div><div class="field"><label for="clientModel">请求模型</label><input id="clientModel" required placeholder="客户端使用的名称，例如 mistral-large"><small>保存后会同步到 CPA 模型列表。</small></div><div class="field"><label for="thinkingMap">思考强度映射</label><input id="thinkingMap" placeholder="例如 high=medium, low=none"><small>留空时传递请求中的思考强度。</small></div><div class="field"><label for="mappingKey">凭证</label><select id="mappingKey"><option value="">按优先级自动选择</option></select></div><label class="mapping-status"><input id="mappingEnabled" type="checkbox" checked aria-label="启用模型映射"> <span id="mappingEnabledLabel">已启用</span></label><p id="modelError" class="form-error" role="alert"></p></div><div class="dialog-actions"><button class="btn" type="button" data-close="modelDialog">取消</button><button class="btn btn-primary" type="submit">保存映射</button></div></form></dialog>
+<dialog id="requestRuleDialog" class="rule-dialog"><form id="requestRuleForm">
+<div class="dialog-head"><h2 id="requestRuleDialogTitle">添加请求规则</h2><button type="button" class="x-button" data-close="requestRuleDialog" aria-label="关闭">×</button></div>
+<div class="dialog-body"><input id="requestRuleId" type="hidden">
+<div class="field"><label for="requestRuleName">规则名称</label><input id="requestRuleName" maxlength="80" placeholder="例如 设置温度 / 复制客户端标记" required></div>
+<div class="edit-columns"><div class="field"><label for="requestRuleAction">操作</label><select id="requestRuleAction"><option value="set">设置值</option><option value="copy">复制字段</option><option value="move">移动 / 重命名字段</option><option value="delete">删除字段</option></select></div><div class="field"><label for="requestRuleTarget">目标位置</label><select id="requestRuleTarget"><option value="body">请求体</option><option value="header">请求标头</option></select></div></div>
+<div id="requestRuleSourceFields" class="edit-columns hidden"><div class="field"><label for="requestRuleSource">来源位置</label><select id="requestRuleSource"><option value="body">请求体</option><option value="header">输入标头</option></select></div><div class="field"><label for="requestRuleFrom">来源字段</label><input id="requestRuleFrom" spellcheck="false" placeholder="/metadata/project"><small id="requestRuleFromHint"></small></div></div>
+<div class="field"><label for="requestRulePath">目标字段</label><input id="requestRulePath" spellcheck="false" placeholder="/temperature" required><small id="requestRulePathHint"></small></div>
+<div class="field" id="requestRuleValueField"><label for="requestRuleValue">设置值（JSON）</label><textarea id="requestRuleValue" rows="4" spellcheck="false" placeholder="0.3" required></textarea><small id="requestRuleValueHint"></small></div>
+<label class="mapping-status" id="requestRuleOverwriteField"><input id="requestRuleOverwrite" type="checkbox" checked> 覆盖现有目标值</label>
+<label class="mapping-status"><input id="requestRuleEnabled" type="checkbox" checked> 启用此规则</label>
+<p id="requestRuleError" class="form-error" role="alert"></p></div>
+<div class="dialog-actions"><button class="btn" type="button" data-close="requestRuleDialog">取消</button><button class="btn btn-primary" type="submit">保存规则</button></div>
+</form></dialog>
 <dialog id="debugDialog" class="debug-dialog"><div class="dialog-head"><div><h2>上游调试明细</h2><div class="sub" id="debugSummary"></div></div><button type="button" class="x-button" data-close="debugDialog" aria-label="关闭">×</button></div><div class="debug-dialog-body"><div class="debug-dialog-toolbar"><div class="segments"><button type="button" data-debug-pane="request" aria-pressed="true">上游请求</button><button type="button" data-debug-pane="response" aria-pressed="false">上游响应</button></div><button class="btn small" id="copyDebug" type="button">复制内容</button></div><pre id="debugOutput" class="debug-output" tabindex="0"></pre></div></dialog>
 <div class="toast hidden" id="toast" role="status"></div>
 <script>/* BRIDGE_SCRIPT */</script>

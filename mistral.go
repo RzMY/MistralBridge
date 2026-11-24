@@ -68,32 +68,14 @@ func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *reque
 		return nil, nil, &statusError{Status: 404, Message: "Mistral model mapping was not found"}
 	}
 	trace.resolved(key, model, req.Payload)
-	body, err := transformRequest(req.Payload, model.UpstreamModel, model.ThinkingMap)
-	if err == nil {
-		body, err = applyKeyChannel(body, key)
-	}
+	body, headers, err := prepareCompletionRequest(req, key, model, settings.RequestEdit)
 	if err != nil {
-		return nil, nil, &statusError{Status: 400, Message: "Invalid chat completion request"}
-	}
-	if req.Stream {
-		body, err = setJSONField(body, "stream", true)
-		if err == nil {
-			body, err = ensureStreamUsage(body)
-		}
-	} else {
-		body, err = setJSONField(body, "stream", false)
-	}
-	if err != nil {
-		return nil, nil, &statusError{Status: 400, Message: "Invalid chat completion request"}
+		return nil, nil, err
 	}
 	trace.resolved(key, model, body)
 	endpoint, err := completionURL(key.BaseURL)
 	if err != nil {
 		return nil, nil, &statusError{Status: 500, Message: "Invalid Mistral API endpoint"}
-	}
-	headers := http.Header{"Authorization": []string{"Bearer " + key.Secret}, "Content-Type": []string{"application/json"}, "Accept": []string{"application/json"}}
-	if req.Stream {
-		headers.Set("Accept", "text/event-stream")
 	}
 	callbackReq := upstreamRequest{Method: http.MethodPost, URL: endpoint, Headers: headers, Body: body, HostCallbackID: req.HostCallbackID}
 	trace.captureRequest(callbackReq.Method, callbackReq.URL, callbackReq.Headers, callbackReq.Body)
@@ -122,25 +104,16 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 		return nil, &statusError{Status: 404, Message: "Mistral model mapping was not found"}
 	}
 	trace.resolved(key, model, req.Payload)
-	body, err := transformRequest(req.Payload, model.UpstreamModel, model.ThinkingMap)
-	if err == nil {
-		body, err = applyKeyChannel(body, key)
-	}
-	if err == nil {
-		body, err = setJSONField(body, "stream", true)
-	}
-	if err == nil {
-		body, err = ensureStreamUsage(body)
-	}
+	req.Stream = true
+	body, headers, err := prepareCompletionRequest(req, key, model, settings.RequestEdit)
 	if err != nil {
-		return nil, &statusError{Status: 400, Message: "Invalid chat completion request"}
+		return nil, err
 	}
 	trace.resolved(key, model, body)
 	endpoint, err := completionURL(key.BaseURL)
 	if err != nil {
 		return nil, &statusError{Status: 500, Message: "Invalid Mistral API endpoint"}
 	}
-	headers := http.Header{"Authorization": []string{"Bearer " + key.Secret}, "Content-Type": []string{"application/json"}, "Accept": []string{"text/event-stream"}}
 	trace.captureRequest(http.MethodPost, endpoint, headers, body)
 	stream, err := openUpstreamHTTPStream(ctx, upstreamRequest{
 		Method: http.MethodPost, URL: endpoint, Headers: headers,
@@ -429,23 +402,45 @@ func applyKeyChannel(raw []byte, key apiKey) ([]byte, error) {
 	return json.Marshal(root)
 }
 
+func prepareCompletionRequest(req rpcExecutorRequest, key apiKey, model modelMapping, config *requestEditConfig) ([]byte, http.Header, error) {
+	body, headers, err := editCompletionRequest(req.Payload, req.Headers, config)
+	if err == nil {
+		body, err = transformRequestWithBuiltins(body, model.UpstreamModel, model.ThinkingMap, false)
+	}
+	if err == nil {
+		body, err = applyKeyChannel(body, key)
+	}
+	if err == nil {
+		body, err = setJSONField(body, "stream", req.Stream)
+	}
+	if err != nil {
+		return nil, nil, &statusError{Status: http.StatusBadRequest, Message: "请求编辑失败：" + err.Error()}
+	}
+	headers.Set("Authorization", "Bearer "+key.Secret)
+	headers.Set("Content-Type", "application/json")
+	headers.Set("Accept", "application/json")
+	if req.Stream {
+		headers.Set("Accept", "text/event-stream")
+	}
+	return body, headers, nil
+}
+
 func transformRequest(raw []byte, model, thinkingMap string) ([]byte, error) {
+	return transformRequestWithBuiltins(raw, model, thinkingMap, true)
+}
+
+func transformRequestWithBuiltins(raw []byte, model, thinkingMap string, builtinEnabled bool) ([]byte, error) {
 	var root map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &root); err != nil {
-		return nil, err
+	if err := json.Unmarshal(raw, &root); err != nil || root == nil {
+		return nil, errors.New("request body must be a JSON object")
 	}
-	modelJSON, _ := json.Marshal(model)
-	root["model"] = modelJSON
-	// OpenAI's response storage option is rejected by Mistral, even when false.
-	delete(root, "store")
-	// Use Mistral's native token limit while preserving an explicit max_tokens.
-	if limit := bytes.TrimSpace(root["max_completion_tokens"]); len(limit) > 0 && !bytes.Equal(limit, []byte("null")) {
-		nativeLimit := bytes.TrimSpace(root["max_tokens"])
-		if len(nativeLimit) == 0 || bytes.Equal(nativeLimit, []byte("null")) {
-			root["max_tokens"] = limit
-		}
+	if model != "" {
+		modelJSON, _ := json.Marshal(model)
+		root["model"] = modelJSON
 	}
-	delete(root, "max_completion_tokens")
+	if builtinEnabled {
+		applyBuiltinFieldMappings(root)
+	}
 	if effort, ok := rawString(root["reasoning_effort"]); ok {
 		if mapped := mapThinking(effort, thinkingMap); mapped != "" {
 			root["reasoning_effort"], _ = json.Marshal(mapped)
@@ -454,10 +449,16 @@ func transformRequest(raw []byte, model, thinkingMap string) ([]byte, error) {
 		}
 	}
 	var messages []map[string]json.RawMessage
-	if err := json.Unmarshal(root["messages"], &messages); err != nil {
+	if err := json.Unmarshal(root["messages"], &messages); err != nil || messages == nil {
 		return nil, errors.New("messages must be an array")
 	}
 	for _, message := range messages {
+		if message == nil {
+			return nil, errors.New("messages must contain objects")
+		}
+		if !builtinEnabled {
+			continue
+		}
 		// Client cache hints are not part of Mistral's content chunk schema.
 		var contentParts []map[string]json.RawMessage
 		if json.Unmarshal(message["content"], &contentParts) == nil {
@@ -478,6 +479,12 @@ func transformRequest(raw []byte, model, thinkingMap string) ([]byte, error) {
 		if role == "developer" {
 			role = "system"
 			message["role"] = json.RawMessage(`"system"`)
+		}
+		if role != "tool" {
+			delete(message, "name")
+		}
+		if role == "assistant" {
+			delete(message, "refusal")
 		}
 		var reasoning strings.Builder
 		for _, field := range []string{"reasoning_content", "reasoning", "reasoning_details"} {
@@ -548,23 +555,6 @@ func mapThinking(value, mapping string) string {
 		}
 	}
 	return value
-}
-
-func ensureStreamUsage(body []byte) ([]byte, error) {
-	var root map[string]json.RawMessage
-	if err := json.Unmarshal(body, &root); err != nil {
-		return nil, err
-	}
-	var options map[string]json.RawMessage
-	if len(root["stream_options"]) > 0 {
-		_ = json.Unmarshal(root["stream_options"], &options)
-	}
-	if options == nil {
-		options = make(map[string]json.RawMessage)
-	}
-	options["include_usage"] = json.RawMessage("true")
-	root["stream_options"], _ = json.Marshal(options)
-	return json.Marshal(root)
 }
 
 func setJSONField(raw []byte, key string, value any) ([]byte, error) {

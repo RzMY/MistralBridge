@@ -17,6 +17,8 @@
   let publishing = false;
   let debugExchange;
   let debugPane = "request";
+  let requestEditBusy = false;
+  const ruleActions = { set: "设置值", copy: "复制字段", move: "移动字段", delete: "删除字段" };
   const selectedModels = new Set();
   const refreshingKeys = new Set();
   const switchingKeys = new Set();
@@ -84,19 +86,21 @@
     $("pageError").textContent = error.message;
     $("pageError").classList.remove("hidden");
   }
-  async function request(path, options = {}) {
+  async function request(path, options = {}, raw = false) {
     const headers = new Headers(options.headers);
     headers.set("Authorization", `Bearer ${managementKey}`);
     if (options.body) headers.set("Content-Type", "application/json");
     const response = await fetch(path, { ...options, headers });
-    const data = await response.json().catch(() => ({}));
+    const responseText = await response.text();
+    let data;
+    try { data = JSON.parse(responseText); } catch { data = {}; }
     if (response.status === 401 || response.status === 403) {
       clearSessionKey(); managementKey = ""; showAuth();
     }
     if (!response.ok) throw new Error(data.error || data.message || `请求失败（HTTP ${response.status}）`);
-    return data;
+    return raw ? responseText : data;
   }
-  const api = (path, options) => request(`${apiRoot}${path}`, options);
+  const api = (path, options, raw) => request(`${apiRoot}${path}`, options, raw);
   const jsonOptions = (method, body) => ({ method, body: JSON.stringify(body) });
   async function busy(button, action) {
     if (button.disabled) return;
@@ -120,6 +124,9 @@
     snapshot.keys ||= []; snapshot.models ||= []; snapshot.catalog ||= [];
     snapshot.debug_mode = Boolean(snapshot.debug_mode);
     snapshot.proxy_url ||= "";
+    snapshot.request_edit ||= { builtin_enabled: true, rules: [] };
+    snapshot.request_edit.rules ||= [];
+    renderRequestEdit();
     renderProxy();
     $("debugModeToggle").setAttribute("aria-checked", String(snapshot.debug_mode));
     renderKeys(); renderModels();
@@ -163,6 +170,75 @@
       controls.forEach(control => { control.disabled = false; });
       $("proxyForm").removeAttribute("aria-busy");
     }
+  }
+  function renderRequestEdit() {
+    const config = snapshot.request_edit;
+    const toggle = $("builtinMappingsToggle");
+    toggle.setAttribute("aria-checked", String(config.builtin_enabled));
+    toggle.querySelector("span:last-child").textContent = config.builtin_enabled ? "已启用" : "已关闭";
+    $("requestRuleCount").textContent = `${config.rules.length} 条规则 · ${config.rules.filter(rule => rule.enabled).length} 条启用`;
+    const fieldText = (scope, path) => `<div class="sub">${scope === "header" ? "标头" : "请求体"}</div><span class="mono">${escapeHTML(path)}</span>`;
+    $("requestRuleRows").innerHTML = config.rules.length ? config.rules.map((rule, index) => {
+      const source = rule.action === "set" ? `<span class="mono">${escapeHTML((rule.value_json || "").slice(0, 120))}</span>` : rule.action === "delete" ? "—" : fieldText(rule.source, rule.from);
+      return `<tr><td><div class="rule-order"><span>${index + 1}</span><button class="btn small" type="button" data-rule-up="${escapeHTML(rule.id)}" aria-label="上移规则 ${escapeHTML(rule.name)}" ${index === 0 ? "disabled" : ""}>↑</button><button class="btn small" type="button" data-rule-down="${escapeHTML(rule.id)}" aria-label="下移规则 ${escapeHTML(rule.name)}" ${index === config.rules.length - 1 ? "disabled" : ""}>↓</button></div></td>
+        <td class="rule-field"><strong>${escapeHTML(rule.name)}</strong><div class="sub">${ruleActions[rule.action]}${rule.action !== "delete" && !rule.overwrite ? " · 保留已有目标" : ""}</div></td><td class="rule-field">${source}</td><td class="rule-field">${fieldText(rule.target, rule.path)}</td>
+        <td><button class="switch" type="button" role="switch" aria-checked="${rule.enabled}" data-rule-toggle="${escapeHTML(rule.id)}" aria-label="启用规则 ${escapeHTML(rule.name)}"><span class="switch-track"></span><span>${rule.enabled ? "已启用" : "未启用"}</span></button></td>
+        <td><div class="actions"><button class="btn small" type="button" data-rule-edit="${escapeHTML(rule.id)}">编辑</button><button class="btn small btn-danger" type="button" data-rule-delete="${escapeHTML(rule.id)}">删除</button></div></td></tr>`;
+    }).join("") : '<tr><td colspan="6" class="empty"><strong>还没有自定义规则</strong>添加规则，设置、复制、移动或删除请求字段</td></tr>';
+    if (requestEditBusy) $("page-request-edit").querySelectorAll("button").forEach(button => { button.disabled = true; });
+  }
+  async function saveRequestEdit(change) {
+    if (requestEditBusy) throw new Error("正在保存请求编辑配置，请稍后再试");
+    requestEditBusy = true;
+    const controls = [...document.querySelectorAll("#page-request-edit button, #requestRuleForm button, #requestRuleForm input, #requestRuleForm select, #requestRuleForm textarea")];
+    controls.forEach(control => { control.disabled = true; });
+    try {
+      snapshot.request_edit = await api("/request-edit", jsonOptions("PATCH", change));
+      $("requestPreviewOutput").classList.add("hidden");
+      notify("请求编辑配置已保存，新请求立即生效");
+    } finally {
+      requestEditBusy = false;
+      controls.forEach(control => { control.disabled = false; });
+      renderRequestEdit(); updateRequestRuleFields();
+    }
+  }
+  function updateRequestRuleFields() {
+    const action = $("requestRuleAction").value;
+    const source = action === "copy" || action === "move";
+    $("requestRuleSourceFields").classList.toggle("hidden", !source);
+    $("requestRuleFrom").required = source;
+    $("requestRuleValueField").classList.toggle("hidden", action !== "set");
+    $("requestRuleValue").required = action === "set";
+    $("requestRuleOverwriteField").classList.toggle("hidden", action === "delete");
+    $("requestRuleFromHint").textContent = $("requestRuleSource").value === "header" ? "输入标头名称，例如 X-Client-Tag；大小写不敏感。" : "JSON Pointer，例如 /metadata/project；支持 *。";
+    $("requestRulePathHint").textContent = $("requestRuleTarget").value === "header" ? "上游标头名称，例如 X-Request-Tag；大小写不敏感。" : "JSON Pointer，例如 /temperature 或 /messages/*/content；复制或移动时，来源和目标的 * 数量须相同。";
+    $("requestRuleValueHint").textContent = $("requestRuleTarget").value === "header" ? '标头值填写 JSON 字符串或字符串数组，例如 "example" 或 ["a", "b"]。' : '支持任意 JSON 值，例如 0.3、true、"example"、null 或 {"key":"value"}。';
+  }
+  function openRequestRule(rule = null) {
+    $("requestRuleForm").reset();
+    $("requestRuleId").value = rule?.id || "";
+    $("requestRuleName").value = rule?.name || "";
+    $("requestRuleAction").value = rule?.action || "set";
+    $("requestRuleTarget").value = rule?.target || "body";
+    $("requestRuleSource").value = rule?.source || "body";
+    $("requestRuleFrom").value = rule?.from || "";
+    $("requestRulePath").value = rule?.path || "";
+    $("requestRuleValue").value = rule?.action === "set" ? rule.value_json : "";
+    $("requestRuleOverwrite").checked = rule ? rule.overwrite : true;
+    $("requestRuleEnabled").checked = rule ? rule.enabled : true;
+    $("requestRuleDialogTitle").textContent = rule ? "编辑请求规则" : "添加请求规则";
+    $("requestRuleError").textContent = "";
+    updateRequestRuleFields(); $("requestRuleDialog").showModal();
+  }
+  async function changeRequestRule(id, action) {
+    const rules = [...snapshot.request_edit.rules];
+    const index = rules.findIndex(rule => rule.id === id);
+    if (index < 0) return;
+    if (action === "toggle") rules[index] = { ...rules[index], enabled: !rules[index].enabled };
+    if (action === "delete") rules.splice(index, 1);
+    if (action === "up" && index > 0) [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]];
+    if (action === "down" && index < rules.length - 1) [rules[index + 1], rules[index]] = [rules[index], rules[index + 1]];
+    await saveRequestEdit({ rules });
   }
   function logQuery() {
     const query = new URLSearchParams({ page: String(page), page_size: $("pageSize").value });
@@ -404,6 +480,42 @@
     if ($("proxyForm").getAttribute("aria-busy") !== "true") saveProxy($("proxyUrl").value.trim());
   });
   $("resetProxy").addEventListener("click", () => saveProxy(""));
+  $("builtinMappingsToggle").addEventListener("click", event => busy(event.currentTarget, () => saveRequestEdit({ builtin_enabled: !snapshot.request_edit.builtin_enabled })));
+  $("addRequestRule").addEventListener("click", () => openRequestRule());
+  ["requestRuleAction", "requestRuleSource", "requestRuleTarget"].forEach(id => $(id).addEventListener("change", updateRequestRuleFields));
+  $("requestRuleForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (requestEditBusy) return;
+    $("requestRuleError").textContent = "";
+    const id = $("requestRuleId").value;
+    const rule = { id, name: $("requestRuleName").value.trim(), enabled: $("requestRuleEnabled").checked, action: $("requestRuleAction").value, target: $("requestRuleTarget").value, path: $("requestRulePath").value.trim(), overwrite: $("requestRuleOverwrite").checked };
+    try {
+      if (rule.action === "set") {
+        rule.value_json = $("requestRuleValue").value.trim();
+        try { JSON.parse(rule.value_json); }
+        catch { throw new Error("设置值不是合法 JSON；字符串请使用双引号"); }
+      }
+      if (rule.action === "copy" || rule.action === "move") { rule.source = $("requestRuleSource").value; rule.from = $("requestRuleFrom").value.trim(); }
+      const rules = [...snapshot.request_edit.rules];
+      const index = rules.findIndex(item => item.id === id);
+      if (id && index < 0) throw new Error("此规则已被删除，请重新添加");
+      if (index < 0) rules.push(rule); else rules[index] = rule;
+      await saveRequestEdit({ rules }); $("requestRuleDialog").close();
+    } catch (error) { $("requestRuleError").textContent = error.message; }
+  });
+  $("requestPreviewForm").addEventListener("submit", event => {
+    event.preventDefault();
+    busy(event.currentTarget.querySelector('[type="submit"]'), async () => {
+      $("requestPreviewError").textContent = ""; $("requestPreviewOutput").classList.add("hidden");
+      try {
+        const body = $("previewRequestBody").value.trim(), headers = $("previewRequestHeaders").value.trim();
+        JSON.parse(body); JSON.parse(headers);
+        const result = await api("/request-edit/preview", { method: "POST", body: `{"body":${body},"headers":${headers}}` }, true);
+        $("requestPreviewOutput").textContent = result;
+        $("requestPreviewOutput").classList.remove("hidden");
+      } catch (error) { $("requestPreviewError").textContent = error instanceof SyntaxError ? "输入请求体或标头不是合法 JSON" : error.message; }
+    });
+  });
   $("authForm").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -529,6 +641,11 @@
       return modelMutation("/models", jsonOptions("PATCH", { ids: [model.id], enabled: !model.enabled }));
     });
     if (data.deleteModel && confirm("删除此模型映射并从 CPA 模型列表移除？")) busy(button, () => modelMutation("/models/delete", jsonOptions("DELETE", { id: data.deleteModel })));
+    if (data.ruleEdit) openRequestRule(snapshot.request_edit.rules.find(rule => rule.id === data.ruleEdit));
+    if (data.ruleToggle) busy(button, () => changeRequestRule(data.ruleToggle, "toggle"));
+    if (data.ruleUp) busy(button, () => changeRequestRule(data.ruleUp, "up"));
+    if (data.ruleDown) busy(button, () => changeRequestRule(data.ruleDown, "down"));
+    if (data.ruleDelete && confirm("删除此请求编辑规则？")) busy(button, () => changeRequestRule(data.ruleDelete, "delete"));
   });
   if (managementKey) connect(); else showAuth();
 })();

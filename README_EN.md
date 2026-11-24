@@ -25,6 +25,7 @@ Mistral Bridge is a native dynamic-library plugin for CLIProxyAPI (CPA). It adap
 - **Model mappings** fetch the upstream catalog and configure client-facing names and reasoning-effort mappings. Changes to mappings and their enabled state update CPA's model list.
 - **Request logs** filter by model, result, credential, reasoning effort, and time range, with request counts, tokens, cache hit rate, and generation speed.
 - **Request debugging** stores complete upstream requests and responses when enabled, including streaming data and error bodies. Credentials are redacted. The latest 100 exchanges are retained separately and can be viewed or cleared from the request log.
+- **Request editing** maps common OpenAI, Responses, Claude, and Gemini parameters through an independent switch enabled by default. Custom rules set, copy, move, or delete body and header fields, with ordering, individual toggles, JSON Pointer array wildcards, and a preview that makes no upstream call. See the [configuration guide (Chinese)](docs/request-edit.md).
 - **Independent proxy** supports HTTP, HTTPS, SOCKS5, and SOCKS5H URLs, including username and password, in the **代理设置** (Proxy settings) tab. Chat, streaming, credential tests, catalog fetches, and quota queries use this proxy when configured. Leaving it empty preserves CPA's HTTP transport and proxy settings.
 - **Panel integration** reuses saved same-origin CPA / CPAMP management sessions and follows CPAMP's light and dark themes.
 
@@ -95,6 +96,8 @@ Send a request to CPA's `/v1/chat/completions` with `model` set to `mistral-smal
 Request model names are used directly in CPA's model list and API calls. With automatic credential selection, the highest-priority enabled keys are selected in round-robin order. An explicit credential binding uses that credential.
 
 A reasoning-effort mapping can use `high=medium, low=none`. Leaving it empty forwards the requested effort. Supported values depend on the upstream model.
+
+Open **请求编辑** (Request editing) to configure input transformations. For example, `seed` maps to `random_seed` and `max_completion_tokens` maps to `max_tokens`, preserving an existing non-null native value. Custom rules run after builtin mappings, before model and reasoning mappings, credentials, and request channels. Both completion paths use the same rules; saved changes apply without restarting. Incoming headers are rule sources and are only forwarded when explicitly set or copied by a rule.
 
 ## Quotas, logs, and data
 

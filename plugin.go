@@ -27,7 +27,7 @@ const (
 )
 
 // Release builds set this to the tag version with -ldflags -X.
-var pluginVersion = "0.3.3"
+var pluginVersion = "0.4.0"
 
 //go:embed web/index.html web/style.css web/app.js
 var webFiles embed.FS
@@ -93,12 +93,13 @@ type RequestLog struct {
 }
 
 type pluginState struct {
-	Keys      []apiKey       `json:"keys"`
-	Catalog   []string       `json:"catalog"`
-	Models    []modelMapping `json:"models"`
-	DebugMode bool           `json:"debug_mode,omitempty"`
-	ProxyURL  string         `json:"proxy_url,omitempty"`
-	Logs      []RequestLog   `json:"-"`
+	Keys        []apiKey           `json:"keys"`
+	Catalog     []string           `json:"catalog"`
+	Models      []modelMapping     `json:"models"`
+	DebugMode   bool               `json:"debug_mode,omitempty"`
+	ProxyURL    string             `json:"proxy_url,omitempty"`
+	RequestEdit *requestEditConfig `json:"request_edit,omitempty"`
+	Logs        []RequestLog       `json:"-"`
 }
 
 type safeKey struct {
@@ -309,6 +310,8 @@ func managementRoutes() []map[string]string {
 	paths := []struct{ method, path string }{
 		{"GET", "/plugins/mistral-bridge/state"},
 		{"PATCH", "/plugins/mistral-bridge/proxy"},
+		{"PATCH", "/plugins/mistral-bridge/request-edit"},
+		{"POST", "/plugins/mistral-bridge/request-edit/preview"},
 		{"POST", "/plugins/mistral-bridge/keys"},
 		{"PATCH", "/plugins/mistral-bridge/keys"},
 		{"POST", "/plugins/mistral-bridge/keys/quota"},
@@ -357,6 +360,10 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return managementJSON(publicState())
 	case method == http.MethodPatch && path == "/proxy":
 		return updateProxy(req.Body)
+	case method == http.MethodPatch && path == "/request-edit":
+		return updateRequestEdit(req.Body)
+	case method == http.MethodPost && path == "/request-edit/preview":
+		return previewRequestEdit(req.Body)
 	case method == http.MethodPost && path == "/keys":
 		return saveKey(req.Body, false)
 	case method == http.MethodPatch && path == "/keys":
@@ -429,6 +436,7 @@ func mutateState(change func(*pluginState) error) error {
 	state.Keys = append([]apiKey(nil), state.Keys...)
 	state.Models = append([]modelMapping(nil), state.Models...)
 	state.Catalog = append([]string(nil), state.Catalog...)
+	state.RequestEdit = cloneRequestEdit(state.RequestEdit)
 	if err := change(&state); err != nil {
 		state = before
 		stateMu.Unlock()
@@ -839,11 +847,12 @@ func currentState() pluginState {
 	stateMu.RLock()
 	defer stateMu.RUnlock()
 	return pluginState{
-		Keys:      append([]apiKey(nil), state.Keys...),
-		Catalog:   append([]string{}, state.Catalog...),
-		Models:    append([]modelMapping{}, state.Models...),
-		DebugMode: state.DebugMode,
-		ProxyURL:  state.ProxyURL,
+		Keys:        append([]apiKey(nil), state.Keys...),
+		Catalog:     append([]string{}, state.Catalog...),
+		Models:      append([]modelMapping{}, state.Models...),
+		DebugMode:   state.DebugMode,
+		ProxyURL:    state.ProxyURL,
+		RequestEdit: cloneRequestEdit(state.RequestEdit),
 	}
 }
 
@@ -856,7 +865,7 @@ func publicState() map[string]any {
 	stateMu.RLock()
 	published := publishedRevision
 	stateMu.RUnlock()
-	return map[string]any{"keys": keys, "catalog": snapshot.Catalog, "models": snapshot.Models, "debug_mode": snapshot.DebugMode, "proxy_url": snapshot.ProxyURL, "models_revision": modelRevision(snapshot.Models), "published_revision": published}
+	return map[string]any{"keys": keys, "catalog": snapshot.Catalog, "models": snapshot.Models, "debug_mode": snapshot.DebugMode, "proxy_url": snapshot.ProxyURL, "request_edit": snapshot.RequestEdit, "models_revision": modelRevision(snapshot.Models), "published_revision": published}
 }
 
 func publicKey(key apiKey) safeKey {
@@ -1057,6 +1066,7 @@ func loadState() {
 	if stored.Models == nil {
 		stored.Models = []modelMapping{}
 	}
+	stored.RequestEdit = cloneRequestEdit(stored.RequestEdit)
 	for i := range stored.Models {
 		stored.Models[i].ClientModel = strings.TrimPrefix(stored.Models[i].ClientModel, pluginID+"/")
 	}

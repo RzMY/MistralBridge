@@ -177,8 +177,8 @@ func TestIndependentProxyStreamsAndErrorBodies(t *testing.T) {
 	continueStream := make(chan struct{})
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(body), `"stream":true`) || !strings.Contains(string(body), `"include_usage":true`) {
-			t.Errorf("stream options missing: %s", body)
+		if !strings.Contains(string(body), `"stream":true`) || strings.Contains(string(body), `"stream_options"`) {
+			t.Errorf("native Mistral stream must omit OpenAI stream_options: %s", body)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"thought\"}]}]}}]}\n\n")
