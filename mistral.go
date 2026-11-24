@@ -436,6 +436,16 @@ func transformRequest(raw []byte, model, thinkingMap string) ([]byte, error) {
 	}
 	modelJSON, _ := json.Marshal(model)
 	root["model"] = modelJSON
+	// OpenAI's response storage option is rejected by Mistral, even when false.
+	delete(root, "store")
+	// Use Mistral's native token limit while preserving an explicit max_tokens.
+	if limit := bytes.TrimSpace(root["max_completion_tokens"]); len(limit) > 0 && !bytes.Equal(limit, []byte("null")) {
+		nativeLimit := bytes.TrimSpace(root["max_tokens"])
+		if len(nativeLimit) == 0 || bytes.Equal(nativeLimit, []byte("null")) {
+			root["max_tokens"] = limit
+		}
+	}
+	delete(root, "max_completion_tokens")
 	if effort, ok := rawString(root["reasoning_effort"]); ok {
 		if mapped := mapThinking(effort, thinkingMap); mapped != "" {
 			root["reasoning_effort"], _ = json.Marshal(mapped)
@@ -587,19 +597,19 @@ func completionURL(base string) (string, error) {
 func upstreamStatusError(status int, body []byte) error {
 	message := "Mistral API rejected the request"
 	var parsed struct {
-		Message string          `json:"message"`
+		Message json.RawMessage `json:"message"`
 		Detail  json.RawMessage `json:"detail"`
 		Error   json.RawMessage `json:"error"`
 	}
 	if json.Unmarshal(body, &parsed) == nil {
 		var nested struct {
-			Message string          `json:"message"`
+			Message json.RawMessage `json:"message"`
 			Detail  json.RawMessage `json:"detail"`
 		}
 		_ = json.Unmarshal(parsed.Error, &nested)
 		var errorText string
 		_ = json.Unmarshal(parsed.Error, &errorText)
-		for _, text := range []string{parsed.Message, upstreamErrorDetail(parsed.Detail), nested.Message, upstreamErrorDetail(nested.Detail), errorText} {
+		for _, text := range []string{upstreamErrorDetail(parsed.Message), upstreamErrorDetail(parsed.Detail), upstreamErrorDetail(nested.Message), upstreamErrorDetail(nested.Detail), errorText} {
 			if strings.TrimSpace(text) != "" {
 				message = text
 				break
@@ -620,6 +630,18 @@ func upstreamStatusError(status int, body []byte) error {
 func upstreamErrorDetail(raw json.RawMessage) string {
 	if detail, ok := rawString(raw); ok {
 		return detail
+	}
+	// Some Mistral routes wrap Pydantic validation details inside message.
+	var wrapped struct {
+		Message json.RawMessage `json:"message"`
+		Detail  json.RawMessage `json:"detail"`
+	}
+	if json.Unmarshal(raw, &wrapped) == nil {
+		for _, field := range []json.RawMessage{wrapped.Message, wrapped.Detail} {
+			if detail := upstreamErrorDetail(field); strings.TrimSpace(detail) != "" {
+				return detail
+			}
+		}
 	}
 	var details []struct {
 		Location []json.RawMessage `json:"loc"`

@@ -7,6 +7,57 @@ import (
 	"testing"
 )
 
+func TestTransformRequestDSHChatOptions(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "streaming request from DSH debug logs",
+			input: `{"model":"alias","store":false,"max_completion_tokens":64,"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"system","content":"System"},{"role":"user","content":"Hello"}]}`,
+			want:  `{"model":"upstream","max_tokens":64,"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"system","content":"System"},{"role":"user","content":"Hello"}]}`,
+		},
+		{
+			name:  "non-streaming tool request keeps nested store fields",
+			input: `{"store":true,"max_completion_tokens":32768,"stream":false,"messages":[{"role":"user","content":"Hello"}],"tools":[{"type":"function","function":{"name":"store","parameters":{"type":"object","properties":{"store":{"type":"boolean"}}}}}],"metadata":{"store":"keep"}}`,
+			want:  `{"model":"upstream","max_tokens":32768,"stream":false,"messages":[{"role":"user","content":"Hello"}],"tools":[{"type":"function","function":{"name":"store","parameters":{"type":"object","properties":{"store":{"type":"boolean"}}}}}],"metadata":{"store":"keep"}}`,
+		},
+		{
+			name:  "explicit Mistral token limit takes precedence",
+			input: `{"max_tokens":128,"max_completion_tokens":64,"messages":[]}`,
+			want:  `{"model":"upstream","max_tokens":128,"messages":[]}`,
+		},
+		{
+			name:  "null Mistral token limit falls back to OpenAI limit",
+			input: `{"max_tokens":null,"max_completion_tokens":64,"messages":[]}`,
+			want:  `{"model":"upstream","max_tokens":64,"messages":[]}`,
+		},
+		{
+			name:  "null OpenAI token limit is omitted",
+			input: `{"max_completion_tokens":null,"messages":[]}`,
+			want:  `{"model":"upstream","messages":[]}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := transformRequest([]byte(test.input), "upstream", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var actual, expected any
+			if err := json.Unmarshal(got, &actual); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(test.want), &expected); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, expected) {
+				t.Fatalf("transformed request = %s; want %s", got, test.want)
+			}
+		})
+	}
+}
+
 func TestTransformRequestStripsContentCacheHints(t *testing.T) {
 	for _, test := range []struct {
 		name  string
@@ -52,7 +103,12 @@ func TestUpstreamStatusErrorValidationDetails(t *testing.T) {
 	// Mistral's validation response includes the rejected prompt under input.
 	validation := `[{"type":"string_type","loc":["body","messages",1,"user","content","str"],"msg":"Input should be a valid string","input":[{"type":"text","text":"PRIVATE PROMPT"}]},{"type":"extra_forbidden","loc":["body","messages",1,"user","content","list[tagged-union[TextChunk,ImageURLChunk]]",0,"text","cache_control"],"msg":"Extra inputs are not permitted","input":{"type":"ephemeral"}}]`
 	want := "body.messages[1].user.content.str: Input should be a valid string; body.messages[1].user.content[0].text.cache_control: Extra inputs are not permitted"
-	for _, body := range []string{`{"detail":` + validation + `}`, `{"error":{"detail":` + validation + `}}`} {
+	for _, body := range []string{
+		`{"detail":` + validation + `}`,
+		`{"error":{"detail":` + validation + `}}`,
+		`{"object":"error","message":{"detail":` + validation + `},"type":"invalid_request_error","raw_status_code":422}`,
+		`{"error":{"message":{"detail":` + validation + `}}}`,
+	} {
 		err := upstreamStatusError(422, []byte(body)).(*statusError)
 		if err.Status != 422 || err.Message != want {
 			t.Fatalf("validation error = %+v", err)
@@ -60,6 +116,18 @@ func TestUpstreamStatusErrorValidationDetails(t *testing.T) {
 		if strings.Contains(err.Message, "PRIVATE PROMPT") {
 			t.Fatal("validation summary exposed the rejected prompt")
 		}
+	}
+}
+
+func TestUpstreamStatusErrorDSHStoreValidation(t *testing.T) {
+	// The wrapped validation error is small enough to hit the raw-body fallback.
+	body := []byte(`{"object":"error","message":{"detail":[{"type":"extra_forbidden","loc":["body","store"],"msg":"Extra inputs are not permitted","input":"PRIVATE INPUT"}]},"type":"invalid_request_error","param":null,"code":null,"raw_status_code":422}`)
+	err := upstreamStatusError(422, body).(*statusError)
+	if err.Status != 422 || err.Message != "body.store: Extra inputs are not permitted" {
+		t.Fatalf("wrapped validation error = %+v", err)
+	}
+	if strings.Contains(err.Message, "PRIVATE INPUT") {
+		t.Fatal("validation summary exposed the rejected input")
 	}
 }
 
@@ -73,6 +141,7 @@ func TestUpstreamStatusErrorMessageFormats(t *testing.T) {
 		{`{"error":{"message":"nested message"}}`, "nested message"},
 		{`{"error":{"detail":"nested detail"}}`, "nested detail"},
 		{`{"error":"string error"}`, "string error"},
+		{`{"message":{"detail":"wrapped detail"}}`, "wrapped detail"},
 		{`upstream unavailable`, "upstream unavailable"},
 		{"", "Mistral API rejected the request"},
 	} {

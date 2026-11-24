@@ -69,6 +69,8 @@ flowchart LR
 
 消息 `content` 数组中各内容块的 `cache_control` 会在发送前移除。该客户端缓存提示字段不属于 Mistral 内容块 schema，透传会触发 HTTP 422。文本、多模态内容和工具参数 schema 保留。
 
+OpenAI 请求顶层的 `store` 会移除，包括 DSH chat 协议默认发送的 `store: false`；Mistral 不支持该字段，关闭存储也会触发 HTTP 422。`max_completion_tokens` 转换为 Mistral 的 `max_tokens`，已有非空 `max_tokens` 时优先保留原值，空的 `max_completion_tokens` 不发送。工具参数 schema 与 metadata 内同名字段不受影响。
+
 ### 思考字段
 
 请求顶层的 `reasoning_effort` 经过映射后发送给上游。映射项以逗号分隔，例如 `high=medium, low=none`。没有配置映射时，请求值会被规范化为小写。`off` 会转换为 `none`。配置了映射但没有匹配项时，仍传递规范化后的原值。
@@ -86,6 +88,8 @@ flowchart LR
 非流式响应的 `choices[].message.content` 和流式响应的 `choices[].delta.content` 如果是 Mistral 内容块数组，插件会拼接其中的 `text` 块作为 OpenAI `content`，并把 `thinking` 块文本写入 `reasoning_content`。数组中其他类型的内容块当前不会转换。响应根对象、usage、finish reason 和工具调用等其他字段会保留。流式模式对每个 `data:` 事件执行相同转换，其他 SSE 行原样转发。
 
 非流式响应和 SSE usage 都会提取输入、输出和总 Token。缓存 Token 从 `prompt_tokens_details.cached_tokens` 或兼容字段 `num_cached_tokens` 读取。`total_tokens` 缺失时由输入与输出 Token 相加得到。
+
+上游错误支持字符串消息以及 `detail`、`error.detail`、`message.detail` 和 `error.message.detail` 包装的校验数组。校验摘要只保留字段路径 `loc` 和原因 `msg`，不向客户端转发包含原始请求数据的 `input`。
 
 ## 凭证与额度
 
