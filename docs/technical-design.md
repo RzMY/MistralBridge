@@ -67,6 +67,8 @@ flowchart LR
 
 执行器只处理 OpenAI Chat Completions 格式。插件使用匹配到的映射覆盖请求体中的 `model`，保留其余未转换字段，并按需要改写思考字段。
 
+每条消息的 OpenAI `developer` 角色会转换为 Mistral 支持的 `system` 角色，消息内容和顺序保留。转换在插件执行器中完成，同时覆盖 Chat Completions 入口与 CPA 转换后的 Responses 请求，以及流式和非流式调用；工具参数 schema、工具调用参数与 metadata 内的同名文本不受影响。Mistral 不支持 `developer` 角色，直接透传会触发 `body.messages[i]` 的 `union_tag_invalid` 和 HTTP 422。
+
 消息 `content` 数组中各内容块的 `cache_control` 会在发送前移除。该客户端缓存提示字段不属于 Mistral 内容块 schema，透传会触发 HTTP 422。文本、多模态内容和工具参数 schema 保留。
 
 OpenAI 请求顶层的 `store` 会移除，包括 DSH chat 协议默认发送的 `store: false`；Mistral 不支持该字段，关闭存储也会触发 HTTP 422。`max_completion_tokens` 转换为 Mistral 的 `max_tokens`，已有非空 `max_tokens` 时优先保留原值，空的 `max_completion_tokens` 不发送。工具参数 schema 与 metadata 内同名字段不受影响。

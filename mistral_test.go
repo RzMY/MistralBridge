@@ -7,6 +7,47 @@ import (
 	"testing"
 )
 
+func TestTransformRequestDeveloperRole(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "issue 2 request without store or tools",
+			input: `{"model":"alias","stream":true,"max_tokens":32,"messages":[{"role":"developer","content":"Reply with only OK."},{"role":"user","content":"Test."}]}`,
+			want:  `{"model":"upstream","stream":true,"max_tokens":32,"messages":[{"role":"system","content":"Reply with only OK."},{"role":"user","content":"Test."}]}`,
+		},
+		{
+			name:  "all developer messages keep their order and content",
+			input: `{"messages":[{"role":"system","content":"Existing instructions"},{"role":"developer","content":[{"type":"text","text":"Additional rules","cache_control":{"type":"ephemeral"}}]},{"role":"user","content":"Keep the word developer."},{"role":"developer","content":"Further rules"}],"metadata":{"role":"developer"}}`,
+			want:  `{"model":"upstream","messages":[{"role":"system","content":"Existing instructions"},{"role":"system","content":[{"type":"text","text":"Additional rules"}]},{"role":"user","content":"Keep the word developer."},{"role":"system","content":"Further rules"}],"metadata":{"role":"developer"}}`,
+		},
+		{
+			name:  "tool schema and arguments containing developer are preserved",
+			input: `{"messages":[{"role":"developer","content":"Rules"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"developer","arguments":"{\"role\":\"developer\"}"}}]},{"role":"tool","tool_call_id":"call_1","content":"developer"}],"tools":[{"type":"function","function":{"name":"developer","parameters":{"type":"object","properties":{"role":{"type":"string","enum":["developer"]}}}}}]}`,
+			want:  `{"model":"upstream","messages":[{"role":"system","content":"Rules"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"developer","arguments":"{\"role\":\"developer\"}"}}]},{"role":"tool","tool_call_id":"call_1","content":"developer"}],"tools":[{"type":"function","function":{"name":"developer","parameters":{"type":"object","properties":{"role":{"type":"string","enum":["developer"]}}}}}]}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := transformRequest([]byte(test.input), "upstream", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var actual, expected any
+			if err := json.Unmarshal(got, &actual); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(test.want), &expected); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, expected) {
+				t.Fatalf("transformed request = %s; want %s", got, test.want)
+			}
+		})
+	}
+}
+
 func TestTransformRequestDSHChatOptions(t *testing.T) {
 	for _, test := range []struct {
 		name  string

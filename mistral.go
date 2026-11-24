@@ -474,6 +474,11 @@ func transformRequest(raw []byte, model, thinkingMap string) ([]byte, error) {
 		}
 		var role string
 		_ = json.Unmarshal(message["role"], &role)
+		// Map OpenAI developer instructions to Mistral's system role.
+		if role == "developer" {
+			role = "system"
+			message["role"] = json.RawMessage(`"system"`)
+		}
 		var reasoning strings.Builder
 		for _, field := range []string{"reasoning_content", "reasoning", "reasoning_details"} {
 			if rawReasoning, exists := message[field]; exists {
