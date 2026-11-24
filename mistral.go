@@ -15,14 +15,17 @@ import (
 const defaultBaseURL = "https://api.mistral.ai/v1"
 
 type rpcExecutorRequest struct {
-	Model          string         `json:"Model"`
-	Payload        []byte         `json:"Payload"`
-	Stream         bool           `json:"Stream"`
-	Headers        http.Header    `json:"Headers"`
-	Query          url.Values     `json:"Query"`
-	Metadata       map[string]any `json:"Metadata"`
-	HostCallbackID string         `json:"host_callback_id,omitempty"`
-	StreamID       string         `json:"stream_id,omitempty"`
+	Model           string         `json:"Model"`
+	Format          string         `json:"Format"`
+	SourceFormat    string         `json:"SourceFormat"`
+	OriginalRequest []byte         `json:"OriginalRequest"`
+	Payload         []byte         `json:"Payload"`
+	Stream          bool           `json:"Stream"`
+	Headers         http.Header    `json:"Headers"`
+	Query           url.Values     `json:"Query"`
+	Metadata        map[string]any `json:"Metadata"`
+	HostCallbackID  string         `json:"host_callback_id,omitempty"`
+	StreamID        string         `json:"stream_id,omitempty"`
 }
 
 type upstreamRequest struct {

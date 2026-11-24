@@ -29,7 +29,7 @@ const (
 // Release builds set this to the tag version with -ldflags -X.
 var pluginVersion = "0.4.0"
 
-//go:embed web/index.html web/style.css web/app.js
+//go:embed web/index.html web/style.css web/json.js web/app.js
 var webFiles embed.FS
 
 //go:embed logo.png
@@ -41,8 +41,10 @@ var consolePage = func() []byte {
 	page, _ := webFiles.ReadFile("web/index.html")
 	css, _ := webFiles.ReadFile("web/style.css")
 	script, _ := webFiles.ReadFile("web/app.js")
+	jsonScript, _ := webFiles.ReadFile("web/json.js")
 	html := strings.Replace(string(page), "/* BRIDGE_STYLES */", string(css), 1)
 	html = strings.ReplaceAll(html, "BRIDGE_LOGO_URI", pluginLogoURI)
+	html = strings.Replace(html, "/* BRIDGE_JSON_SCRIPT */", string(jsonScript), 1)
 	return []byte(strings.Replace(html, "/* BRIDGE_SCRIPT */", string(script), 1))
 }()
 
@@ -70,28 +72,30 @@ type modelMapping struct {
 }
 
 type RequestLog struct {
-	ID             string                `json:"id"`
-	Model          string                `json:"model"`
-	UpstreamModel  string                `json:"upstream_model,omitempty"`
-	Thinking       string                `json:"thinking,omitempty"`
-	KeyID          string                `json:"key_id,omitempty"`
-	KeyLabel       string                `json:"key_label,omitempty"`
-	KeyMasked      string                `json:"key_masked,omitempty"`
-	Stream         bool                  `json:"stream,omitempty"`
-	FirstTokenMS   *int64                `json:"first_token_ms,omitempty"`
-	CachedTokens   *int                  `json:"cached_tokens,omitempty"`
-	TotalTokens    int                   `json:"total_tokens,omitempty"`
-	UsageKnown     bool                  `json:"usage_known,omitempty"`
-	Error          string                `json:"error,omitempty"`
-	Status         string                `json:"status"`
-	HTTPStatus     int                   `json:"http_status,omitempty"`
-	DebugAvailable bool                  `json:"debug_available,omitempty"`
-	DroppedCount   int                   `json:"dropped_count,omitempty"`
-	DroppedFields  []droppedRequestField `json:"dropped_fields,omitempty"`
-	DurationMS     int64                 `json:"duration_ms"`
-	InputTokens    int                   `json:"input_tokens,omitempty"`
-	OutputTokens   int                   `json:"output_tokens,omitempty"`
-	CreatedAt      time.Time             `json:"created_at"`
+	ID                       string                `json:"id"`
+	Model                    string                `json:"model"`
+	UpstreamModel            string                `json:"upstream_model,omitempty"`
+	Thinking                 string                `json:"thinking,omitempty"`
+	KeyID                    string                `json:"key_id,omitempty"`
+	KeyLabel                 string                `json:"key_label,omitempty"`
+	KeyMasked                string                `json:"key_masked,omitempty"`
+	Stream                   bool                  `json:"stream,omitempty"`
+	FirstTokenMS             *int64                `json:"first_token_ms,omitempty"`
+	CachedTokens             *int                  `json:"cached_tokens,omitempty"`
+	TotalTokens              int                   `json:"total_tokens,omitempty"`
+	UsageKnown               bool                  `json:"usage_known,omitempty"`
+	Error                    string                `json:"error,omitempty"`
+	Status                   string                `json:"status"`
+	HTTPStatus               int                   `json:"http_status,omitempty"`
+	DebugAvailable           bool                  `json:"debug_available,omitempty"`
+	OriginalRequestAvailable bool                  `json:"original_request_available,omitempty"`
+	ExecutorRequestAvailable bool                  `json:"executor_request_available,omitempty"`
+	DroppedCount             int                   `json:"dropped_count,omitempty"`
+	DroppedFields            []droppedRequestField `json:"dropped_fields,omitempty"`
+	DurationMS               int64                 `json:"duration_ms"`
+	InputTokens              int                   `json:"input_tokens,omitempty"`
+	OutputTokens             int                   `json:"output_tokens,omitempty"`
+	CreatedAt                time.Time             `json:"created_at"`
 }
 
 type pluginState struct {
@@ -314,6 +318,8 @@ func managementRoutes() []map[string]string {
 		{"PATCH", "/plugins/mistral-bridge/proxy"},
 		{"PATCH", "/plugins/mistral-bridge/request-edit"},
 		{"POST", "/plugins/mistral-bridge/request-edit/preview"},
+		{"GET", "/plugins/mistral-bridge/request-edit/debug-records"},
+		{"GET", "/plugins/mistral-bridge/request-edit/debug-record"},
 		{"POST", "/plugins/mistral-bridge/keys"},
 		{"PATCH", "/plugins/mistral-bridge/keys"},
 		{"POST", "/plugins/mistral-bridge/keys/quota"},
@@ -366,6 +372,10 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return updateRequestEdit(req.Body)
 	case method == http.MethodPost && path == "/request-edit/preview":
 		return previewRequestEdit(req.Body)
+	case method == http.MethodGet && path == "/request-edit/debug-records":
+		return queryPreviewDebugRecords(req.Query)
+	case method == http.MethodGet && path == "/request-edit/debug-record":
+		return importPreviewDebugRecord(req.Query)
 	case method == http.MethodPost && path == "/keys":
 		return saveKey(req.Body, false)
 	case method == http.MethodPatch && path == "/keys":

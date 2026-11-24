@@ -124,6 +124,15 @@ def run(args):
         report["checks"].append(name)
         print("PASS " + name, flush=True)
 
+    def wait_new_log(model, stream, existing):
+        for _ in range(80):
+            rows = api("/logs")["logs"]
+            row = next((row for row in rows if row["id"] not in existing and row["model"] == model and row.get("stream", False) == stream), None)
+            if row is not None:
+                return row
+            time.sleep(0.05)
+        raise AssertionError("completion log was not published")
+
     def chat(stream=False, endpoint="chat/completions", extra=None, expected=200):
         body = {"model": "request-edit-test", "stream": stream, "seed": 42, "metadata": {"source": "rename", "drop": "delete", "rows": [{"id": 1}, {"id": 2}]}}
         messages = [{"role": "developer", "content": "Reply OK."}, {"role": "user", "content": "Test."}]
@@ -163,13 +172,39 @@ def run(args):
         assert "Authorization" not in preview["headers"] and len(captures) == before
         passed("management preview preserves integers and performs no upstream call")
         for stream in [False, True]:
+            existing = {row["id"] for row in api("/logs")["logs"]}
             capture = chat(stream)
             body = capture["body"]
             assert body["model"] == "mock-upstream" and body["max_tokens"] == 32 and body["random_seed"] == 42
             assert body["messages"][0]["role"] == "system" and body["stream"] == stream
             assert "store" not in body and "stream_options" not in body and "seed" not in body
             assert capture["headers"]["authorization"] == "Bearer mock-secret" and "x-client-tag" not in capture["headers"]
+            wait_new_log("request-edit-test", stream, existing)
             passed("native Chat aliases and transport, stream=" + str(stream))
+        before_import = len(captures)
+        records = api("/request-edit/debug-records?page_size=1")
+        assert records["total"] >= 2 and len(records["records"]) == 1 and records["pages"] >= 2
+        imported = api("/request-edit/debug-record?id=" + records["records"][0]["id"])
+        assert imported["kind"] == "original_request" and imported["source"]["model"] == "request-edit-test"
+        assert imported["format"] == "openai" and imported["source"]["original_available"] and imported["source"]["executor_available"]
+        assert imported["headers"]["Authorization"] == ["[redacted]"]
+        assert imported["headers"]["X-Client-Tag"] == ["client-tag"]
+        imported_body = json.loads(imported["body_json"])
+        assert imported_body["model"] == "request-edit-test" and imported_body["seed"] == 42 and imported_body["max_completion_tokens"] == 32
+        assert imported_body["messages"][0]["role"] == "developer" and imported_body["store"] is False
+        upstream_import = api("/request-edit/debug-record?id=" + records["records"][0]["id"] + "&kind=upstream_request")
+        upstream_body = json.loads(upstream_import["body_json"])
+        assert upstream_body["model"] == "mock-upstream" and upstream_body["random_seed"] == 42 and "seed" not in upstream_body
+        assert "store" not in upstream_body and upstream_body["messages"][0]["role"] == "system"
+        executor_import = api("/request-edit/debug-record?id=" + records["records"][0]["id"] + "&kind=executor_request")
+        assert executor_import["kind"] == "executor_request" and executor_import["format"] == "openai"
+        assert "mock-secret" not in json.dumps(imported) and len(captures) == before_import
+        preview = api("/request-edit/preview", {"body": imported_body, "headers": imported["headers"]}, "POST")
+        assert preview["body"]["random_seed"] == 42 and len(captures) == before_import
+        assert api("/request-edit/debug-records?search=not-a-real-request")["total"] == 0
+        status, _ = http(api_root + "/request-edit/debug-record?id=" + "f" * 24)
+        assert status == 404
+        passed("true original request, executor input and upstream snapshots remain distinct and import offline")
         rules = [
             {"name": "temperature", "enabled": True, "action": "set", "target": "body", "path": "/temperature", "value_json": "0.3", "overwrite": True},
             {"name": "forward header", "enabled": True, "action": "copy", "source": "header", "from": "x-client-tag", "target": "header", "path": "X-Forwarded-Tag", "overwrite": True},
@@ -183,6 +218,7 @@ def run(args):
         assert all(rule["id"] for rule in saved["rules"])
         for endpoint in ["chat/completions", "responses"]:
             for stream in [False, True]:
+                existing = {row["id"] for row in api("/logs")["logs"]}
                 capture = chat(stream, endpoint)
                 body = capture["body"]
                 assert body["temperature"] == 0.3 and body["metadata"]["client_tag"] == "client-tag", "input headers are missing from the executor"
@@ -191,6 +227,19 @@ def run(args):
                     assert body["metadata"]["renamed"] == "rename" and "source" not in body["metadata"] and "drop" not in body["metadata"]
                     assert all(item["edited"] for item in body["metadata"]["rows"])
                 assert capture["headers"]["x-forwarded-tag"] == "client-tag" and "x-unmapped" not in capture["headers"]
+                row = wait_new_log("request-edit-test", stream, existing)
+                original = api("/request-edit/debug-record?id=" + row["id"])
+                original_body = json.loads(original["body_json"])
+                assert original["kind"] == "original_request" and original["headers"]["X-Client-Tag"] == ["client-tag"]
+                assert original_body["metadata"]["source"] == "rename" and original_body["metadata"]["drop"] == "delete"
+                assert "temperature" not in original_body and "client_tag" not in original_body["metadata"]
+                if endpoint == "responses":
+                    assert "input" in original_body and "messages" not in original_body and original_body["max_output_tokens"] == 32
+                    assert original["format"] == "openai-response"
+                    executor = api("/request-edit/debug-record?id=" + row["id"] + "&kind=executor_request")
+                    assert "messages" in json.loads(executor["body_json"]) and executor["format"] == "openai"
+                else:
+                    assert original_body["messages"][0]["role"] == "developer"
                 passed("ordered body/header rules via " + endpoint + ", stream=" + str(stream))
         override = {"name": "last temperature", "enabled": True, "action": "set", "target": "body", "path": "/temperature", "value_json": "0.7", "overwrite": True}
         saved = api("/request-edit", {"rules": [saved["rules"][0], override]}, "PATCH")
@@ -225,10 +274,10 @@ def run(args):
         api("/debug", {"enabled": False}, "PATCH")
         extension = {"client_extension": {"project": "auto-drop", "api_key": "do-not-log"}}
         for stream in [False, True]:
+            existing = {row["id"] for row in api("/logs")["logs"]}
             capture = chat(stream, extra=extension)
             assert "client_extension" not in capture["body"]
-            logs = api("/logs")
-            row = next(row for row in logs["logs"] if row["model"] == "request-edit-test" and row.get("stream", False) == stream)
+            row = wait_new_log("request-edit-test", stream, existing)
             assert row["dropped_count"] == 1 and row["dropped_fields"][0]["path"] == "/client_extension"
             assert "auto-drop" in row["dropped_fields"][0]["value"] and "do-not-log" not in json.dumps(row)
             assert not row.get("debug_available")
@@ -248,6 +297,17 @@ def run(args):
         passed("independent cleanup toggle, custom mapping priority and discard preview")
         api("/debug", {"enabled": True}, "PATCH")
 
+        existing = {row["id"] for row in api("/logs")["logs"]}
+        chat(extra={"client_extension": {"project": "original-capture"}})
+        row = wait_new_log("request-edit-test", False, existing)
+        original = api("/request-edit/debug-record?id=" + row["id"])
+        upstream = api("/request-edit/debug-record?id=" + row["id"] + "&kind=upstream_request")
+        assert json.loads(original["body_json"])["client_extension"]["project"] == "original-capture"
+        assert "client_extension" not in json.loads(upstream["body_json"])
+        preview = api("/request-edit/preview", {"body": json.loads(original["body_json"]), "headers": original["headers"], "source_format": original["format"]}, "POST")
+        assert preview["dropped_count"] == 1 and preview["dropped_fields"][0]["path"] == "/client_extension"
+        passed("raw original import preserves discarded client fields and reproduces cleanup in preview")
+
         if args.live_state:
             live_path = Path(args.live_state).resolve()
             live_hash = hashlib.sha256(live_path.read_bytes()).hexdigest()
@@ -265,6 +325,7 @@ def run(args):
                 created_model = next(m for m in saved_models["models"] if m["client_model"] == "request-edit-real-smoke")
                 publish_models()
                 for stream in [False, True]:
+                    existing = {row["id"] for row in api("/logs")["logs"]}
                     body = {"model": "request-edit-real-smoke", "messages": [{"role": "user", "content": "Reply with only OK."}], "stream": stream, "max_completion_tokens": 16, "seed": 7, "store": False, "client_extension": {"project": "real-auto-drop"}}
                     status, response = http("/v1/chat/completions", body, management=False)
                     assert status == 200, f"real upstream stream={stream}: HTTP {status}"
@@ -275,7 +336,7 @@ def run(args):
                     else:
                         usage = json.loads(response).get("usage")
                     assert usage and usage.get("prompt_tokens", 0) > 0 and usage.get("total_tokens", 0) > 0, "native Mistral usage was not returned"
-                    row = next(row for row in api("/logs")["logs"] if row["model"] == "request-edit-real-smoke" and row.get("stream", False) == stream)
+                    row = wait_new_log("request-edit-real-smoke", stream, existing)
                     assert row["dropped_count"] == 1 and row["dropped_fields"][0]["path"] == "/client_extension"
                     report.setdefault("real_upstream", []).append({"stream": stream, "http_status": status, "usage": usage})
                     passed("real Mistral completion and native usage, stream=" + str(stream))
@@ -304,6 +365,9 @@ def run(args):
                     assert debug["request"]["headers"].get("Authorization") == ["[redacted]"]
                 else:
                     assert row.get("http_status") == 400, "missing request in a transport debug record"
+                assert debug["original_request"]["headers"].get("Authorization") == ["[redacted]"]
+                assert debug["executor_request"]["format"] == "openai"
+                assert row.get("original_request_available") and row.get("executor_request_available")
         passed("stream token logs and edited request debug redaction")
         report["passed"] = True
     except Exception:

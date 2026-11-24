@@ -24,15 +24,19 @@ const (
 var debugMu sync.RWMutex
 
 type debugExchange struct {
-	ID         string        `json:"id"`
-	CreatedAt  time.Time     `json:"created_at"`
-	DurationMS int64         `json:"duration_ms"`
-	Request    debugMessage  `json:"request"`
-	Response   debugResponse `json:"response"`
-	secret     string        `json:"-"`
+	ID              string        `json:"id"`
+	CreatedAt       time.Time     `json:"created_at"`
+	DurationMS      int64         `json:"duration_ms"`
+	OriginalRequest *debugMessage `json:"original_request,omitempty"`
+	ExecutorRequest *debugMessage `json:"executor_request,omitempty"`
+	Request         debugMessage  `json:"request"`
+	Response        debugResponse `json:"response"`
+	secret          string        `json:"-"`
+	secrets         []string      `json:"-"`
 }
 
 type debugMessage struct {
+	Format  string      `json:"format,omitempty"`
 	Method  string      `json:"method,omitempty"`
 	URL     string      `json:"url,omitempty"`
 	Headers http.Header `json:"headers,omitempty"`
@@ -110,12 +114,42 @@ func saveDebugLog(exchange *debugExchange, secret string) error {
 	}
 	stored := *exchange
 	stored.secret = ""
-	stored.Request.URL = redactDebugValue(stored.Request.URL, secret)
-	stored.Request.Headers = redactDebugHeaders(stored.Request.Headers, secret)
-	stored.Request.Body = redactDebugValue(stored.Request.Body, secret)
-	stored.Response.Headers = redactDebugHeaders(stored.Response.Headers, secret)
-	stored.Response.Body = redactDebugValue(stored.Response.Body, secret)
-	stored.Response.Error = redactDebugValue(stored.Response.Error, secret)
+	stored.secrets = nil
+	secrets := append(append([]string(nil), exchange.secrets...), secret)
+	redact := func(value string) string {
+		for _, key := range secrets {
+			value = redactDebugValue(value, key)
+		}
+		return value
+	}
+	redactMessage := func(message debugMessage) debugMessage {
+		message.URL = redact(message.URL)
+		message.Headers = redactDebugHeaders(message.Headers, "")
+		for name, values := range message.Headers {
+			for i, value := range values {
+				message.Headers[name][i] = redact(value)
+			}
+		}
+		message.Body = redact(message.Body)
+		return message
+	}
+	if exchange.OriginalRequest != nil {
+		message := redactMessage(*exchange.OriginalRequest)
+		stored.OriginalRequest = &message
+	}
+	if exchange.ExecutorRequest != nil {
+		message := redactMessage(*exchange.ExecutorRequest)
+		stored.ExecutorRequest = &message
+	}
+	stored.Request = redactMessage(stored.Request)
+	stored.Response.Headers = redactDebugHeaders(stored.Response.Headers, "")
+	for name, values := range stored.Response.Headers {
+		for i, value := range values {
+			stored.Response.Headers[name][i] = redact(value)
+		}
+	}
+	stored.Response.Body = redact(stored.Response.Body)
+	stored.Response.Error = redact(stored.Response.Error)
 	raw, err := json.Marshal(stored)
 	if err != nil {
 		return err
@@ -216,7 +250,7 @@ func redactDebugHeaders(headers http.Header, secret string) http.Header {
 	redacted := make(http.Header, len(headers))
 	for name, values := range headers {
 		lowerName := strings.ToLower(name)
-		if strings.Contains(lowerName, "authorization") || strings.Contains(lowerName, "api-key") || strings.Contains(lowerName, "apikey") || strings.Contains(lowerName, "token") || strings.Contains(lowerName, "cookie") || strings.Contains(lowerName, "secret") {
+		if sensitiveDroppedName(name) || strings.Contains(lowerName, "token") {
 			redacted[name] = []string{debugRedactedText}
 			continue
 		}

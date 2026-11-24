@@ -16,8 +16,24 @@
   let searchTimer;
   let publishing = false;
   let debugExchange;
-  let debugPane = "request";
+  let debugPane = "original_request";
   let requestEditBusy = false;
+  let previewResultText = "";
+  let previewResultMode = "tree";
+  let previewInputRevision = 0;
+  let previewRun = 0;
+  let previewImportRun = 0;
+	let previewSourceFormat = "";
+  let previewDebugPage = 1;
+  let previewDebugPages = 1;
+  let previewDebugController;
+  let previewDebugTimer;
+  const jsonViews = new Map();
+  const debugRequestNames = { original_request: "原始请求", executor_request: "执行器输入", upstream_request: "上游请求" };
+  const previewInputs = {
+    body: { input: "previewRequestBody", structured: "previewBodyStructured", tree: "previewBodyTree" },
+    headers: { input: "previewRequestHeaders", structured: "previewHeadersStructured", tree: "previewHeadersTree" }
+  };
   const ruleActions = { set: "设置值", copy: "复制字段", move: "移动字段", delete: "删除字段" };
   const selectedModels = new Set();
   const refreshingKeys = new Set();
@@ -198,7 +214,7 @@
     controls.forEach(control => { control.disabled = true; });
     try {
       snapshot.request_edit = await api("/request-edit", jsonOptions("PATCH", change));
-      $("requestPreviewOutput").classList.add("hidden");
+      invalidatePreviewResult();
       notify("请求编辑配置已保存，新请求立即生效");
     } finally {
       requestEditBusy = false;
@@ -243,6 +259,98 @@
     if (action === "up" && index > 0) [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]];
     if (action === "down" && index < rules.length - 1) [rules[index + 1], rules[index]] = [rules[index], rules[index + 1]];
     await saveRequestEdit({ rules });
+  }
+  function invalidatePreviewResult() {
+    previewRun++;
+    previewResultText = "";
+    jsonViews.delete("result");
+    $("requestPreviewResult").classList.add("hidden");
+    $("requestPreviewOutput").replaceChildren();
+    $("requestPreviewText").textContent = "";
+  }
+  function previewInputChanged() {
+    previewInputRevision++;
+    invalidatePreviewResult();
+    $("requestPreviewError").textContent = "";
+    if ($("previewDebugSource").dataset.recordId) {
+      $("previewDebugSource").textContent = "已修改导入的请求，预览使用当前输入。";
+      delete $("previewDebugSource").dataset.recordId;
+    }
+  }
+  function setPreviewInputMode(name, mode) {
+    const fields = previewInputs[name];
+    if (mode === "tree") jsonViews.set(name, BridgeJSON.mount($(fields.tree), $(fields.input).value));
+    $(fields.input).classList.toggle("hidden", mode === "tree");
+    $(fields.structured).classList.toggle("hidden", mode !== "tree");
+    document.querySelectorAll(`[data-json-input="${name}"]`).forEach(button => button.setAttribute("aria-pressed", String(button.dataset.jsonMode === mode)));
+  }
+  function setPreviewResultMode(mode) {
+    previewResultMode = mode;
+    $("requestPreviewOutput").classList.toggle("hidden", mode !== "tree");
+    $("requestPreviewText").classList.toggle("hidden", mode !== "text");
+    document.querySelectorAll("[data-json-output-mode]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.jsonOutputMode === mode)));
+    $("requestPreviewResult").querySelectorAll("[data-json-expand], [data-json-collapse]").forEach(button => { button.disabled = mode !== "tree"; });
+  }
+  async function copyTextToClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const input = document.createElement("textarea");
+      input.value = text; input.style.position = "fixed"; input.style.opacity = "0";
+      document.body.append(input); input.select(); document.execCommand("copy"); input.remove();
+    }
+  }
+  async function loadPreviewDebugRecords() {
+    previewDebugController?.abort();
+    const controller = new AbortController(); previewDebugController = controller;
+    const query = new URLSearchParams({ page: String(previewDebugPage), page_size: "10", search: $("previewDebugSearch").value.trim() });
+    $("previewDebugError").textContent = "";
+    $("previewDebugRows").setAttribute("aria-busy", "true");
+    try {
+      const data = await api(`/request-edit/debug-records?${query}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      previewDebugPage = data.page; previewDebugPages = data.pages;
+      $("previewDebugCount").textContent = `${number(data.total)} 条调试记录`;
+      $("previewDebugPage").textContent = `第 ${data.page} 页，共 ${data.pages} 页`;
+      $("previewDebugPrev").disabled = data.page <= 1; $("previewDebugNext").disabled = data.page >= data.pages;
+      const kind = $("previewDebugKind").value;
+      $("previewDebugRows").innerHTML = data.records.length ? data.records.map(record => {
+        const available = kind === "original_request" ? record.original_available : kind === "executor_request" ? record.executor_available : true;
+        return `<tr>
+        <td>${escapeHTML(dateText(record.created_at))}<div class="sub mono">${escapeHTML(record.id)}</div></td><td class="rule-field">${escapeHTML(record.model)}<div class="sub mono">${escapeHTML(record.upstream_model || "—")}</div></td>
+        <td>${escapeHTML(record.key_label || "—")}<div class="sub">${record.stream ? "流式" : "普通"}</div></td><td><span class="badge ${record.status === "error" ? "error" : "success"}">${record.status === "error" ? "失败" : "成功"}${record.http_status ? ` · ${Number(record.http_status)}` : ""}</span><div class="sub">${record.original_available ? "已保存原始请求" : "未保存原始请求"}</div></td>
+        <td><button class="btn small" type="button" data-preview-import="${escapeHTML(record.id)}" data-preview-kind="${kind}" aria-label="导入调试请求 ${escapeHTML(record.id)}" ${available ? "" : 'disabled title="此记录未保存所选来源，请切换导入内容"'}>${available ? "导入" : "来源不可用"}</button></td></tr>`;
+      }).join("") : '<tr><td colspan="5" class="empty"><strong>没有可导入的调试记录</strong>调整搜索条件，或开启调试模式后发送请求，再刷新记录。</td></tr>';
+    } catch (error) {
+      if (error.name !== "AbortError") $("previewDebugError").textContent = error.message;
+    } finally {
+      if (previewDebugController === controller) $("previewDebugRows").removeAttribute("aria-busy");
+    }
+  }
+  async function importPreviewDebugRecord(id, kind = "original_request") {
+    const run = ++previewImportRun;
+    const revision = previewInputRevision;
+    const data = await api(`/request-edit/debug-record?id=${encodeURIComponent(id)}&kind=${encodeURIComponent(kind)}`);
+    if (run !== previewImportRun) return;
+    if (revision !== previewInputRevision) throw new Error("加载期间输入已修改，请重新导入以使用此记录");
+    // Validate/format both values before changing either input. An expired,
+    // malformed or oversized record must not erase a user's current work.
+    const body = BridgeJSON.format(data.body_json);
+    const headers = BridgeJSON.format(JSON.stringify(data.headers || {}));
+    const source = data.source;
+    $("previewRequestBody").value = body; $("previewRequestHeaders").value = headers;
+    previewInputChanged();
+    previewSourceFormat = data.format || "";
+    for (const name of Object.keys(previewInputs)) setPreviewInputMode(name, "edit");
+    $("previewDebugSource").textContent = `已导入 ${dateText(source.created_at)} · ${source.model || "调试请求"} · ${source.id}（脱敏${debugRequestNames[data.kind]}${data.format ? ` · ${data.format}` : ""}）`;
+    $("previewDebugSource").dataset.recordId = source.id;
+    $("importExecutorForPreview").dataset.recordId = source.id;
+    $("importExecutorForPreview").classList.toggle("hidden", data.kind !== "original_request" || !data.format || data.format === "openai" || !source.executor_available);
+    $("previewDebugDialog").close();
+    $("debugDialog").close();
+    $("requestPreviewPanel").open = true;
+    showView("request-edit");
+    notify(`${debugRequestNames[data.kind]}已导入预览，可继续查看或编辑`);
   }
   function logQuery() {
     const query = new URLSearchParams({ page: String(page), page_size: $("pageSize").value });
@@ -312,15 +420,17 @@
   }
   function formatDebugBody(body) {
     if (!body) return "（空响应体）";
-    try { return JSON.stringify(JSON.parse(body), null, 2); }
+    try { return BridgeJSON.format(body); }
     catch { return body; }
   }
   function debugText() {
     if (!debugExchange) return "";
-    if (debugPane === "request") {
-      const request = debugExchange.request || {};
+    if (debugPane !== "response") {
+      const request = debugExchange[debugPane];
+      if (!request) return "此记录未保存此请求来源。旧版记录不能恢复原始请求；开启调试模式后发送新请求即可记录。";
       const headers = Object.entries(request.headers || {}).map(([name, values]) => `${name}: ${values.join(", ")}`).join("\n");
-      return [`${request.method || ""} ${request.url || ""}`.trim(), headers, formatDebugBody(request.body)].filter(Boolean).join("\n\n");
+      const label = debugPane === "request" ? "实际上游请求" : debugPane === "original_request" ? "原始请求（CPA 协议转换与插件编辑前）" : "执行器输入（CPA 转换后，插件编辑前）";
+      return [label + (request.format ? ` · ${request.format}` : ""), `${request.method || ""} ${request.url || ""}`.trim(), headers, formatDebugBody(request.body)].filter(Boolean).join("\n\n");
     }
     const response = debugExchange.response || {};
     const headers = Object.entries(response.headers || {}).map(([name, values]) => `${name}: ${values.join(", ")}`).join("\n");
@@ -332,23 +442,20 @@
   function renderDebugPane() {
     document.querySelectorAll("[data-debug-pane]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.debugPane === debugPane)));
     $("debugOutput").textContent = debugText();
+    const field = debugPane === "response" ? "original_request" : debugPane;
+    $("importOpenDebug").disabled = !debugExchange?.[field]?.body;
+    $("importOpenDebug").textContent = field === "original_request" ? "导入原始请求预览" : field === "executor_request" ? "导入执行器输入预览" : "导入上游请求预览";
   }
   async function openDebugLog(id) {
     debugExchange = await api(`/logs/debug?id=${encodeURIComponent(id)}`);
-    debugPane = "request";
+    debugPane = debugExchange.original_request ? "original_request" : "request";
     $("debugSummary").textContent = `${dateText(debugExchange.created_at)} · ${duration(debugExchange.duration_ms)} · ${debugExchange.id}`;
     renderDebugPane();
     $("debugDialog").showModal();
   }
   async function copyDebugText() {
     const text = debugText();
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-    } else {
-      const input = document.createElement("textarea");
-      input.value = text; input.style.position = "fixed"; input.style.opacity = "0";
-      document.body.append(input); input.select(); document.execCommand("copy"); input.remove();
-    }
+    await copyTextToClipboard(text);
     notify("调试内容已复制");
   }
   function activeKeyChannel(key) {
@@ -518,16 +625,31 @@
   $("requestPreviewForm").addEventListener("submit", event => {
     event.preventDefault();
     busy(event.currentTarget.querySelector('[type="submit"]'), async () => {
-      $("requestPreviewError").textContent = ""; $("requestPreviewOutput").classList.add("hidden");
+      $("requestPreviewError").textContent = ""; invalidatePreviewResult();
+      const run = previewRun;
       try {
-        const body = $("previewRequestBody").value.trim(), headers = $("previewRequestHeaders").value.trim();
-        JSON.parse(body); JSON.parse(headers);
-        const result = await api("/request-edit/preview", { method: "POST", body: `{"body":${body},"headers":${headers}}` }, true);
-        $("requestPreviewOutput").textContent = result;
-        $("requestPreviewOutput").classList.remove("hidden");
-      } catch (error) { $("requestPreviewError").textContent = error instanceof SyntaxError ? "输入请求体或标头不是合法 JSON" : error.message; }
+        const body = BridgeJSON.compact($("previewRequestBody").value), headers = BridgeJSON.compact($("previewRequestHeaders").value);
+        const result = await api("/request-edit/preview", { method: "POST", body: `{"body":${body},"headers":${headers},"source_format":${JSON.stringify(previewSourceFormat)}}` }, true);
+        if (run !== previewRun) return;
+        previewResultText = BridgeJSON.format(result);
+        jsonViews.set("result", BridgeJSON.mount($("requestPreviewOutput"), previewResultText));
+        $("requestPreviewText").textContent = previewResultText;
+        setPreviewResultMode(previewResultMode);
+        $("requestPreviewResult").classList.remove("hidden");
+      } catch (error) { if (run === previewRun) $("requestPreviewError").textContent = error instanceof SyntaxError ? "输入请求体或标头不是合法 JSON" : error.message; }
     });
   });
+  Object.values(previewInputs).forEach(fields => $(fields.input).addEventListener("input", previewInputChanged));
+  $("choosePreviewDebug").addEventListener("click", () => { $("previewDebugDialog").showModal(); loadPreviewDebugRecords(); });
+  $("refreshPreviewDebug").addEventListener("click", () => loadPreviewDebugRecords());
+  $("previewDebugKind").addEventListener("change", () => loadPreviewDebugRecords());
+  $("previewDebugSearch").addEventListener("input", () => { clearTimeout(previewDebugTimer); previewDebugTimer = setTimeout(() => { previewDebugPage = 1; loadPreviewDebugRecords(); }, 250); });
+  $("previewDebugPrev").addEventListener("click", () => { if (previewDebugPage > 1) { previewDebugPage--; loadPreviewDebugRecords(); } });
+  $("previewDebugNext").addEventListener("click", () => { if (previewDebugPage < previewDebugPages) { previewDebugPage++; loadPreviewDebugRecords(); } });
+  $("previewDebugDialog").addEventListener("close", () => { clearTimeout(previewDebugTimer); previewDebugController?.abort(); });
+  $("importOpenDebug").addEventListener("click", event => busy(event.currentTarget, () => importPreviewDebugRecord(debugExchange.id, debugPane === "request" ? "upstream_request" : debugPane === "response" ? "original_request" : debugPane)));
+  $("importExecutorForPreview").addEventListener("click", event => busy(event.currentTarget, () => importPreviewDebugRecord(event.currentTarget.dataset.recordId, "executor_request")));
+  $("copyPreviewResult").addEventListener("click", event => busy(event.currentTarget, async () => { await copyTextToClipboard(previewResultText); notify("预览 JSON 已复制"); }));
   $("authForm").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -564,7 +686,7 @@
   $("addModel").addEventListener("click", () => openMapping());
   $("debugModeToggle").addEventListener("click", event => {
     const enabled = !snapshot.debug_mode;
-    if (enabled && !confirm("调试模式会保存完整的上游请求和响应，其中可能包含提示词及模型输出。认证信息会脱敏，最多保留最近 100 条或 256 MiB。继续启用？")) return;
+    if (enabled && !confirm("调试模式会保存原始请求、执行器输入及完整的上游请求和响应，其中可能包含提示词及模型输出。认证信息会脱敏，最多保留最近 100 条或 256 MiB。继续启用？")) return;
     busy(event.currentTarget, async () => {
       await api("/debug", jsonOptions("PATCH", { enabled }));
       await loadState(); await loadLogs();
@@ -658,6 +780,26 @@
     if (data.ruleUp) busy(button, () => changeRequestRule(data.ruleUp, "up"));
     if (data.ruleDown) busy(button, () => changeRequestRule(data.ruleDown, "down"));
     if (data.ruleDelete && confirm("删除此请求编辑规则？")) busy(button, () => changeRequestRule(data.ruleDelete, "delete"));
+    if (data.previewImport) busy(button, async () => {
+      $("previewDebugError").textContent = "";
+      try { await importPreviewDebugRecord(data.previewImport, data.previewKind); }
+      catch (error) { $("previewDebugError").textContent = error.message; }
+    });
+    if (data.jsonInput) {
+      try { setPreviewInputMode(data.jsonInput, data.jsonMode); $("requestPreviewError").textContent = ""; }
+      catch (error) { $("requestPreviewError").textContent = error instanceof SyntaxError ? "请先修正输入 JSON，再切换折叠视图" : error.message; }
+    }
+    if (data.formatJson) {
+      try {
+        const fields = previewInputs[data.formatJson];
+        $(fields.input).value = BridgeJSON.format($(fields.input).value);
+        if (!$(fields.structured).classList.contains("hidden")) setPreviewInputMode(data.formatJson, "tree");
+        $("requestPreviewError").textContent = "";
+      } catch (error) { $("requestPreviewError").textContent = error instanceof SyntaxError ? "输入 JSON 无效，无法格式化" : error.message; }
+    }
+    if (data.jsonOutputMode) setPreviewResultMode(data.jsonOutputMode);
+    if (data.jsonExpand) jsonViews.get(data.jsonExpand)?.expandAll();
+    if (data.jsonCollapse) jsonViews.get(data.jsonCollapse)?.collapseAll();
   });
   if (managementKey) connect(); else showAuth();
 })();

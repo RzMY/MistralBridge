@@ -641,11 +641,15 @@ func editCompletionRequestWithReport(raw []byte, incoming http.Header, config *r
 
 func previewRequestEdit(raw []byte) ([]byte, error) {
 	var input struct {
-		Body    json.RawMessage            `json:"body"`
-		Headers map[string]json.RawMessage `json:"headers"`
+		Body         json.RawMessage            `json:"body"`
+		Headers      map[string]json.RawMessage `json:"headers"`
+		SourceFormat string                     `json:"source_format,omitempty"`
 	}
-	if len(raw) > 1024*1024 || decodeEditJSON(raw, &input) != nil {
+	if len(raw) > maxPreviewRequestBytes || decodeEditJSON(raw, &input) != nil {
 		return managementJSONStatus(400, map[string]string{"error": "请提供 JSON 请求体与标头对象"})
+	}
+	if input.SourceFormat != "" && input.SourceFormat != "openai" {
+		return managementJSONStatus(400, map[string]string{"error": "所选原始请求使用 " + input.SourceFormat + " 协议；字段规则作用于 CPA 转换后的 Chat 请求，请点击“导入执行器输入”运行预览"})
 	}
 	headers := http.Header{}
 	for name, rawValue := range input.Headers {

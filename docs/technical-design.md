@@ -118,6 +118,8 @@ flowchart LR
 | `GET /state` | 返回凭证掩码、模型目录、映射和 revision |
 | `PATCH /request-edit` | 独立更新内置映射开关或替换有序自定义规则，保存失败回滚 |
 | `POST /request-edit/preview` | 使用当前配置预览输入标头和请求体，不调用上游 |
+| `GET /request-edit/debug-records` | 搜索、分页返回仍有调试明细的记录元数据 |
+| `GET /request-edit/debug-record?id=...&kind=...` | 默认读取真实原始请求，可显式选择执行器输入或上游请求，不读取完整响应，不调用上游 |
 | `POST /keys`、`PATCH /keys` | 添加或编辑凭证 |
 | `POST /keys/test`、`POST /keys/quota` | 测试凭证或刷新额度 |
 | `PATCH /keys/channel` | 持久化渠道切换，保留凭证其他设置、创建来源与双池额度 |
@@ -146,11 +148,15 @@ flowchart LR
 
 ## 调试模式
 
-调试模式默认关闭。每个请求在开始时读取一次开关状态，因此切换开关只影响之后开始的请求。启用后，插件保存实际发往 Mistral 的方法、URL、请求头和转换后请求体，以及上游响应状态、响应头和原始响应体。调试记录展示转换后的上游请求，不包含 CPA 收到的客户端原始请求报文。流式请求按读取顺序拼接响应块，非流式请求保存完整响应体。调试记录通过 `DebugAvailable` 标记回链到普通请求日志。
+调试模式默认关闭。每个请求在开始时读取一次开关状态，因此切换开关只影响之后开始的请求。启用后，`newRequestTrace` 在插件字段转换、路由校验和上游请求之前，复制 CPA RPC 的 `OriginalRequest`、`SourceFormat` 和输入 Headers 至 `original_request`，另将 `Payload`、`Format` 和 Headers 复制至 `executor_request`。前者保留 CPA 协议转换前的真实客户端请求，后者保留 CPA 转换后的执行器输入。宿主未提供原始正文时省略 `original_request`，不伪造回退。随后保存实际发往 Mistral 的方法、URL、请求头和转换后请求体至 `request`，并保存响应状态、响应头和正文。流式按读取顺序拼接响应块，非流式保存完整响应体。普通日志使用 `debug_available`、`original_request_available`、`executor_request_available` 标记可用来源；保存失败不发布这些标记。
 
-保存前会遮蔽 Authorization、API Key、Token、Cookie 和 Secret 类请求头，并将当前凭证的完整 Key 从 URL、请求体、响应体和错误文本中替换为 `[redacted]`。其他提示词、模型输出和业务字段会保留，因此调试文件可能包含敏感数据。调试记录没有额外加密，访问控制依赖 CPA 管理 API 和宿主文件权限。
+保存前会遮蔽 Authorization、API Key、Token、Cookie、Password 和 Secret 类请求头，并将当前上游凭证及输入认证标头值从三个请求快照、响应和错误文本中替换为 `[redacted]`。输入和上游标头使用独立副本，脱敏不改写运行中的请求。其他提示词、模型输出和业务字段会保留，因此调试文件可能包含敏感数据。调试记录没有额外加密，访问控制依赖 CPA 管理 API 和宿主文件权限。
 
 调试数据按最近修改时间清理，最多保留 100 条且总量不超过 256 MiB。超过 256 MiB 的单条记录不会保存。关闭调试开关不会删除已保存记录。控制台可单独清理调试数据，清空请求日志也会删除调试明细。
+
+`preview_debug.go` 为请求编辑预览提供调试记录选择和导入。列表仅使用普通日志元数据和调试文件存在性；导入默认选择 `original_request`，也支持 `executor_request`、`upstream_request`。通过流式 JSON decoder 读完所选快照后停止；未找到且遇到 `response` 时立即返回来源缺失，不读取巨大响应体。旧记录没有的来源返回 HTTP 409，前端按元数据禁用对应按钮。已过期、非 JSON 对象或超过 1 MiB 的请求返回错误，前端验证两份输入后才替换内容。非 Chat 原始请求可原样查看，运行字段预览前需显式选择 CPA 转换后的执行器输入。`web/json.js` 以原数字字面量构造只读 JSON 树和格式化文本，不经 JavaScript Number 重写；对象和数组懒加载子节点，支持单个字段和整体展开、折叠。Node 测试覆盖大整数、指数、转义字符串、重复键及恶意属性名。
+
+CPA v8.0.78 的 Responses 调用实际可能保留原始 `OriginalRequest`，同时将 `SourceFormat` 规范化为 `openai`。`originalDebugFormat` 在该情况下根据原始正文明确的 `input` / `contents` 形态，或 Anthropic 版本头识别来源协议，仅用于快照标识和预览提示，不改写原始字节。
 
 流式上游返回非 2xx 状态时，调试模式会读取错误流并保存响应正文。关闭调试模式时，为避免额外读取开销，错误流会直接关闭。普通日志仍记录上游状态和解析得到的错误摘要。
 

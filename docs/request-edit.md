@@ -69,6 +69,18 @@
 
 展开 **预览请求编辑**，输入 JSON 请求体与标头对象，点击 **预览编辑结果**。预览使用已保存的配置，不发送 Mistral 请求。结果显示字段编辑后的请求体与待转发标头；实际请求还会应用模型映射、凭证和使用渠道。保存新配置后旧预览会隐藏，重新预览即可查看新结果。
 
+点击 **从调试记录导入**，可按模型、凭证、HTTP 状态码或请求 ID 搜索仍有调试明细的真实记录，翻页后点击对应记录的 **导入**。默认来源为 **原始请求**；也可切换为 **执行器输入** 或 **上游请求**。在请求日志的 **查看** 弹窗中，可分别查看三个请求来源，点击对应的导入按钮。导入会填写请求体和标头、显示来源 ID、协议和时间，不自动运行预览或发送请求，也不改变保存的映射规则。
+
+调试模式在请求开始时同步记录 CPA 的 `OriginalRequest`（协议转换前的真实原始请求体及输入标头）和执行器 `Payload`（CPA 转换后、插件字段编辑前的输入），随后再记录最终上游请求与响应。原始快照保留 `developer`、`seed`、`max_completion_tokens` 及之后被规则删除或自动丢弃的字段，可以重新验证字段转换效果。认证标头、输入凭证和上游 Key 会脱敏为 `[redacted]`；其余 JSON 文本、格式和数值精度保留。记录开始后的编辑、模型路由或上游错误也不会覆盖已捕获的原始快照。
+
+旧版记录只保存了编辑后的上游请求，无法补回真实原始内容；列表明确显示“未保存原始请求”，选择原始来源时禁用其导入按钮。宿主未提供 `OriginalRequest` 时，也只标记执行器输入可用，不将其伪装为客户端原始请求。未开启调试的历史请求没有可导入明细。
+
+Responses、Claude、Gemini 的原始请求按各自协议原样导入供查看，插件的字段规则仍作用于 CPA 转换后的 Chat 请求。要运行这类请求的字段预览，可点击来源旁的 **导入执行器输入**，明确切换到已保存的转换后快照。Chat Completions 原始请求可以直接运行预览。
+
+记录被清理、没有有效 JSON 对象请求或超过预览上限（1 MiB）时显示错误，保留当前输入。列表只读取元数据，导入只读取选中请求快照，不读取其完整流式响应。
+
+请求体和标头可点击 **格式化** 统一缩进，或切换到只读 **折叠视图**，按字段展开或收起对象和数组，支持 **全部展开 / 全部折叠**。修改内容时切回 **编辑**。结果默认使用同样的折叠视图，也可切换到格式化的 **JSON 文本** 并 **复制 JSON**。格式化、导入、结构查看和复制均保留原数字字面量，不会舍入大整数。输入或规则改变后，过期结果会隐藏，正在加载的旧预览不会覆盖新输入。
+
 例如，添加一条来源为输入标头 `X-Client-Tag`、目标为请求体 `/metadata/client_tag` 的复制规则后，预览输入 `{"X-Client-Tag":"desktop"}` 会得到 `metadata.client_tag="desktop"`。
 
 ## 管理 API
@@ -79,7 +91,9 @@
 | --- | --- |
 | `GET /state` | 返回 `request_edit: {builtin_enabled, auto_drop_incompatible, rules}` |
 | `PATCH /request-edit` | 独立更新任一开关，或替换整个有序规则列表 |
-| `POST /request-edit/preview` | 接收 `body` JSON 对象与 `headers` 对象，返回编辑结果及 `dropped_count`、`dropped_fields` |
+| `POST /request-edit/preview` | 接收 `body`、`headers` 与可选 `source_format`，返回编辑结果及 `dropped_count`、`dropped_fields`；预览接受 Chat（`openai`）格式 |
+| `GET /request-edit/debug-records?search=...&page=1&page_size=10` | 搜索仍有调试明细的记录元数据，返回 `records`、`total`、`page`、`pages`；每条含 `original_available`、`executor_available` |
+| `GET /request-edit/debug-record?id=...&kind=original_request` | 按所选来源返回 `source`、原精度 `body_json`、脱敏 `headers`、`kind` 与 `format`；`kind` 缺省为 `original_request`，也支持 `executor_request`、`upstream_request`；来源未记录返回 HTTP 409，不回退到其他快照 |
 | `GET /logs` | 日志中的 `dropped_count`、`dropped_fields` 表示本次自动清理，明细含 `path`、`value`、`reason`、`truncated` |
 
 关闭内置映射且保留已有规则：
@@ -124,4 +138,4 @@
 
 设置值以 `value_json` 字符串提交和保存，字符串内容是 JSON 字面量；例如 JSON 字符串值 `example` 对应 `"value_json":"\"example\""`。这样规则保存、页面编辑和预览不会把 `9007199254740993` 等整数舍入。新增规则未提供 ID 时由服务器分配，编辑与排序时保留 ID。`{"rules":[]}` 清空自定义规则。
 
-配置位于 `<auth-dir>/plugin-data/mistral-bridge/state.json` 的 `request_edit` 字段中，使用原子写入；校验或保存失败会保留原配置。开启请求调试后，明细记录最终编辑后的实际上游请求。
+配置位于 `<auth-dir>/plugin-data/mistral-bridge/state.json` 的 `request_edit` 字段中，使用原子写入；校验或保存失败会保留原配置。开启请求调试后，明细同时记录原始请求、执行器输入和编辑后的上游请求。

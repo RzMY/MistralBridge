@@ -26,8 +26,46 @@ func newRequestTrace(req rpcExecutorRequest) *requestTrace {
 	trace := &requestTrace{started: now, entry: RequestLog{ID: randomID(), Model: req.Model, Stream: req.Stream, CreatedAt: now.UTC(), Status: "ok", HTTPStatus: 200}}
 	if debugModeEnabled() {
 		trace.debug = &debugExchange{ID: trace.entry.ID, CreatedAt: now.UTC()}
+		trace.debug.secrets = newRequestDropReport(req.Headers, "").secrets
+		// CPA supplies OriginalRequest before its own protocol translation. Keep
+		// it separate from Payload, which is already in the executor's format.
+		if len(req.OriginalRequest) > 0 {
+			trace.debug.OriginalRequest = &debugMessage{Format: originalDebugFormat(req), Headers: req.Headers.Clone(), Body: string(req.OriginalRequest)}
+		}
+		format := req.Format
+		if format == "" {
+			format = "openai"
+		}
+		trace.debug.ExecutorRequest = &debugMessage{Format: format, Headers: req.Headers.Clone(), Body: string(req.Payload)}
 	}
 	return trace
+}
+
+func originalDebugFormat(req rpcExecutorRequest) string {
+	// CPA may normalize SourceFormat to the plugin's input format while still
+	// supplying the true OriginalRequest (observed for Responses in v8.0.78).
+	// Recognize only unambiguous body shapes; never rewrite the saved body.
+	format := req.SourceFormat
+	if format != "" && format != "openai" {
+		return format
+	}
+	var root map[string]json.RawMessage
+	if json.Unmarshal(req.OriginalRequest, &root) == nil && root != nil {
+		if _, chat := root["messages"]; !chat {
+			if _, responses := root["input"]; responses {
+				return "openai-response"
+			}
+			if _, gemini := root["contents"]; gemini {
+				return "gemini"
+			}
+		}
+	}
+	for name := range req.Headers {
+		if strings.EqualFold(name, "anthropic-version") {
+			return "claude"
+		}
+	}
+	return format
 }
 
 func (t *requestTrace) resolved(key apiKey, model modelMapping, body []byte) {
@@ -141,6 +179,8 @@ func (t *requestTrace) finish(usage map[string]int, err error) {
 		}
 		if saveDebugLog(t.debug, t.secret) == nil {
 			t.entry.DebugAvailable = true
+			t.entry.OriginalRequestAvailable = t.debug.OriginalRequest != nil
+			t.entry.ExecutorRequestAvailable = t.debug.ExecutorRequest != nil
 		}
 	}
 	if usage != nil {

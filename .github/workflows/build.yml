@@ -40,7 +40,10 @@ jobs:
             exit 1
           fi
       - name: Check frontend JavaScript
-        run: node --check web/app.js
+        run: |
+          node --check web/app.js
+          node --check web/json.js
+          node --test scripts/test_json_viewer.cjs
       - name: Test release tooling
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
