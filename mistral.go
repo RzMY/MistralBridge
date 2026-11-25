@@ -66,21 +66,12 @@ func (e *statusError) Error() string { return e.Message }
 
 func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *requestTrace) ([]byte, http.Header, error) {
 	settings := currentState()
-	key, model, ok := resolveKeyAndModel(settings, req.Model)
-	if !ok {
-		return nil, nil, &statusError{Status: 404, Message: "Mistral model mapping was not found"}
-	}
-	trace.resolved(key, model, req.Payload)
-	body, headers, drops, err := prepareCompletionRequest(req, key, model, settings.RequestEdit)
-	trace.recordDroppedFields(drops)
+	prepared, err := completionLimits.prepare(settings, req, trace)
 	if err != nil {
 		return nil, nil, err
 	}
-	trace.resolved(key, model, body)
-	endpoint, err := completionURL(key.BaseURL)
-	if err != nil {
-		return nil, nil, &statusError{Status: 500, Message: "Invalid Mistral API endpoint"}
-	}
+	body, headers, endpoint := prepared.body, prepared.headers, prepared.endpoint
+	defer prepared.reservation.finish(nil)
 	callbackReq := upstreamRequest{Method: http.MethodPost, URL: endpoint, Headers: headers, Body: body, HostCallbackID: req.HostCallbackID}
 	trace.captureRequest(callbackReq.Method, callbackReq.URL, callbackReq.Headers, callbackReq.Body)
 	responseRaw, err := doUpstreamHTTP(ctx, callbackReq, settings.ProxyURL)
@@ -94,31 +85,36 @@ func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *reque
 		return nil, nil, &statusError{Status: 502, Message: "Invalid response from HTTP bridge"}
 	}
 	trace.captureResponse(response.StatusCode, response.Headers, response.Body, true)
+	if response.StatusCode == http.StatusTooManyRequests {
+		limited := prepared.reservation.throttled(response.Headers)
+		prepared.reservation.finish(map[string]int{"total_tokens": 0})
+		return nil, nil, limited
+	}
+	if response.StatusCode >= 400 {
+		prepared.reservation.finish(map[string]int{"total_tokens": 0})
+	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return nil, nil, upstreamStatusError(response.StatusCode, response.Body)
 	}
+	prepared.reservation.finish(parseUsage(response.Body))
 	result, err := normalizeCompletion(response.Body)
 	return result, response.Headers, err
 }
 
 func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace *requestTrace) (http.Header, error) {
 	settings := currentState()
-	key, model, ok := resolveKeyAndModel(settings, req.Model)
-	if !ok {
-		return nil, &statusError{Status: 404, Message: "Mistral model mapping was not found"}
-	}
-	trace.resolved(key, model, req.Payload)
 	req.Stream = true
-	body, headers, drops, err := prepareCompletionRequest(req, key, model, settings.RequestEdit)
-	trace.recordDroppedFields(drops)
+	prepared, err := completionLimits.prepare(settings, req, trace)
 	if err != nil {
 		return nil, err
 	}
-	trace.resolved(key, model, body)
-	endpoint, err := completionURL(key.BaseURL)
-	if err != nil {
-		return nil, &statusError{Status: 500, Message: "Invalid Mistral API endpoint"}
-	}
+	body, headers, endpoint := prepared.body, prepared.headers, prepared.endpoint
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			prepared.reservation.finish(nil)
+		}
+	}()
 	trace.captureRequest(http.MethodPost, endpoint, headers, body)
 	stream, err := openUpstreamHTTPStream(ctx, upstreamRequest{
 		Method: http.MethodPost, URL: endpoint, Headers: headers,
@@ -129,6 +125,13 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 		return nil, &statusError{Status: 502, Message: "Mistral streaming request failed"}
 	}
 	trace.captureResponseHead(stream.StatusCode, stream.Headers)
+	var limited error
+	if stream.StatusCode == http.StatusTooManyRequests {
+		limited = prepared.reservation.throttled(stream.Headers)
+	}
+	if stream.StatusCode >= 400 {
+		prepared.reservation.finish(map[string]int{"total_tokens": 0})
+	}
 	if stream.StatusCode < 200 || stream.StatusCode > 299 {
 		body := append([]byte(nil), stream.Body...)
 		trace.captureResponseChunk(stream.Body)
@@ -141,13 +144,17 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 		} else {
 			trace.completeResponse()
 		}
+		if limited != nil {
+			return nil, limited
+		}
 		return nil, upstreamStatusError(stream.StatusCode, body)
 	}
 	if !stream.opened() {
 		trace.captureResponseError(errors.New("Mistral stream was not opened"))
 		return nil, &statusError{Status: 502, Message: "Mistral stream was not opened"}
 	}
-	go relayStream(req, stream, trace)
+	handedOff = true
+	go relayStream(req, stream, trace, prepared.reservation)
 	return http.Header{"content-type": []string{"text/event-stream"}}, nil
 }
 
@@ -175,10 +182,15 @@ func readStreamErrorBody(req rpcExecutorRequest, stream upstreamStreamResponse, 
 	}
 }
 
-func relayStream(req rpcExecutorRequest, stream upstreamStreamResponse, trace *requestTrace) {
+func relayStream(req rpcExecutorRequest, stream upstreamStreamResponse, trace *requestTrace, reservations ...*tokenReservation) {
 	var streamErr error
 	var usage map[string]int
-	defer func() { trace.finish(usage, streamErr) }()
+	defer func() {
+		for _, reservation := range reservations {
+			reservation.finish(usage)
+		}
+		trace.finish(usage, streamErr)
+	}()
 	defer stream.close(req.HostCallbackID)
 	defer hostCall("host.stream.close", map[string]any{"stream_id": req.StreamID})
 	var pending []byte

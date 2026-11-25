@@ -120,6 +120,8 @@ State is stored at `<auth-dir>/plugin-data/mistral-bridge/state.json`, with requ
 
 The proxy URL is stored in the same `state.json` as `proxy_url` and applies to new requests after saving. Click **沿用 CPA 配置** (Use CPA configuration), or clear the URL and save, to restore CPA's HTTP callbacks. Independent proxy mode retains the plugin's request logs and debug details, while upstream requests bypass CPA's `host.http` callbacks.
 
+The plugin embeds TPM/RPS limits for 23 models from the downloaded account snapshot. Scheduling skips cooling credentials, and upstream 429 responses trigger cooldown for both normal and streaming requests. See [rate limits and testing](docs/rate-limits.md).
+
 ## Build from source
 
 Use Go 1.26.11 and a C compiler for the target platform. On Linux amd64, run the following command.

@@ -1,0 +1,94 @@
+{
+  "codestral-2508": {
+    "tpm": 2000000,
+    "rps": 16.67
+  },
+  "codestral-embed": {
+    "tpm": 5000000,
+    "rps": 12.0
+  },
+  "deepseek-v4-1-flash-1017": {
+    "tpm": 10000000,
+    "rps": 22.22
+  },
+  "glm-5-2": {
+    "tpm": 300000,
+    "rps": 0.5
+  },
+  "ministral-14b-2512": {
+    "tpm": 3000000,
+    "rps": 4.0
+  },
+  "ministral-3b-2512": {
+    "tpm": 4000000,
+    "rps": 100.0
+  },
+  "ministral-8b-2512": {
+    "tpm": 2000000,
+    "rps": 25.0
+  },
+  "mistral-embed-2312": {
+    "tpm": 20000000,
+    "rps": 12.0
+  },
+  "mistral-large-2512": {
+    "tpm": 800000,
+    "rps": 0.5
+  },
+  "mistral-large-4": {
+    "tpm": 15000000,
+    "rps": 33.33
+  },
+  "mistral-medium-latest": {
+    "tpm": 1000000,
+    "rps": 33.33
+  },
+  "mistral-moderation-2603": {
+    "tpm": 5000000,
+    "rps": 16.67
+  },
+  "mistral-small-2603": {
+    "tpm": 500000,
+    "rps": 16.67
+  },
+  "voxtral-mini-2602": {
+    "tpm": 2000000,
+    "rps": 12.0
+  },
+  "voxtral-mini-transcribe-3": {
+    "tpm": 5000000,
+    "rps": 12.0
+  },
+  "voxtral-mini-transcribe-realtime-2602": {
+    "tpm": 1200000,
+    "rps": 12.0
+  },
+  "voxtral-mini-transcribe-realtime-3": {
+    "tpm": 5000000,
+    "rps": 12.0
+  },
+  "voxtral-mini-tts-2603": {
+    "tpm": 5000000,
+    "rps": 12.0
+  },
+  "voxtral-mini-tts-3-0": {
+    "tpm": 5000000,
+    "rps": 12.0
+  },
+  "voxtral-small-2507": {
+    "tpm": 400000,
+    "rps": 12.0
+  },
+  "voxtral-small-transcribe-3": {
+    "tpm": 5000000,
+    "rps": 12.0
+  },
+  "zai-glm-5-3": {
+    "tpm": 32000000,
+    "rps": 66.67
+  },
+  "zai-glm-5-3-flash": {
+    "tpm": 10666666,
+    "rps": 22.22
+  }
+}

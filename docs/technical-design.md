@@ -99,6 +99,10 @@ flowchart LR
 
 上游错误支持字符串消息以及 `detail`、`error.detail`、`message.detail` 和 `error.message.detail` 包装的校验数组。校验摘要只保留字段路径 `loc` 和原因 `msg`，不向客户端转发包含原始请求数据的 `input`。
 
+## 模型限额调度
+
+`rate_limits.go` 统一执行优先级选择、同级轮询、RPS 间隔、TPM 预留与 429 冷却。普通请求在响应后结算，流式请求由 relay 在完成或中断时结算。具体限额、估算边界和集成测试见 [模型限额与冷却](rate-limits.md)。
+
 ## 凭证与额度
 
 凭证记录包含名称、API Key、上游 API 地址、启用状态、优先级、创建时间、创建来源 `source`、使用渠道 `channel` 和双池额度 `quotas`。API Key 保存在本地 `state.json`。管理 API 返回的 `safeKey` 不包含原始 Key，只返回尾号掩码和供控制台管理使用的公开字段。

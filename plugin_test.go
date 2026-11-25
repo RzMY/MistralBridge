@@ -16,6 +16,7 @@ func isolatedState(t *testing.T) {
 	t.Helper()
 	t.Setenv("MISTRAL_BRIDGE_DATA_DIR", t.TempDir())
 	state = pluginState{Keys: []apiKey{}, Models: []modelMapping{}, Catalog: []string{}, Logs: []RequestLog{}}
+	completionLimits = newCompletionScheduler()
 	stateLoaded = true
 	publishedRevision = ""
 	original := hostCall
@@ -116,10 +117,20 @@ func TestMappingRegistrationRenameAndCatalogSync(t *testing.T) {
 }
 
 func TestPrioritySelectionAndExplicitBinding(t *testing.T) {
+	isolatedState(t)
+	selectKey := func(settings pluginState) (apiKey, bool) {
+		req := rpcExecutorRequest{Model: "alias", Payload: []byte(`{"messages":[]}`)}
+		selected, err := completionLimits.prepare(settings, req, newRequestTrace(req))
+		if err != nil {
+			return apiKey{}, false
+		}
+		selected.reservation.finish(nil)
+		return selected.key, true
+	}
 	settings := pluginState{Models: []modelMapping{{ClientModel: "alias", Enabled: true}}, Keys: []apiKey{{ID: "low", Priority: 0, Enabled: true}, {ID: "high1", Priority: 5, Enabled: true}, {ID: "disabled", Priority: 10}, {ID: "high2", Priority: 5, Enabled: true}}}
 	used := map[string]bool{}
 	for i := 0; i < 8; i++ {
-		key, _, ok := resolveKeyAndModel(settings, "alias")
+		key, ok := selectKey(settings)
 		if !ok || key.Priority != 5 {
 			t.Fatalf("key = %+v", key)
 		}
@@ -129,12 +140,12 @@ func TestPrioritySelectionAndExplicitBinding(t *testing.T) {
 		t.Fatal("same-priority keys did not rotate")
 	}
 	settings.Models[0].KeyID = "low"
-	key, _, ok := resolveKeyAndModel(settings, "alias")
+	key, ok := selectKey(settings)
 	if !ok || key.ID != "low" {
 		t.Fatal("explicit binding ignored")
 	}
 	settings.Models[0].KeyID = "disabled"
-	if _, _, ok := resolveKeyAndModel(settings, "alias"); ok {
+	if _, ok := selectKey(settings); ok {
 		t.Fatal("disabled bound key selected")
 	}
 }

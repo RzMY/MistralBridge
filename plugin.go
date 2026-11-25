@@ -17,7 +17,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -145,7 +144,6 @@ var (
 	logMu             sync.Mutex
 	stateLoaded       bool
 	dataDir           string
-	keyTurn           atomic.Uint64
 	publishedRevision string
 	hostCall          = callHost
 )
@@ -821,37 +819,6 @@ func getKey(id string) (apiKey, bool) {
 		}
 	}
 	return apiKey{}, false
-}
-
-func resolveKeyAndModel(snapshot pluginState, requested string) (apiKey, modelMapping, bool) {
-	modelName := strings.TrimPrefix(requested, pluginID+"/")
-	var model *modelMapping
-	for i := range snapshot.Models {
-		if snapshot.Models[i].Enabled && snapshot.Models[i].ClientModel == modelName {
-			model = &snapshot.Models[i]
-			break
-		}
-	}
-	if model == nil {
-		return apiKey{}, modelMapping{}, false
-	}
-	keys := make([]apiKey, 0, len(snapshot.Keys))
-	for _, key := range snapshot.Keys {
-		if key.Enabled && (model.KeyID == "" || key.ID == model.KeyID) {
-			if len(keys) > 0 && key.Priority < keys[0].Priority {
-				continue
-			}
-			if len(keys) > 0 && key.Priority > keys[0].Priority {
-				keys = keys[:0]
-			}
-			keys = append(keys, key)
-		}
-	}
-	if len(keys) == 0 {
-		return apiKey{}, modelMapping{}, false
-	}
-	index := keyTurn.Add(1) - 1
-	return keys[index%uint64(len(keys))], *model, true
 }
 
 func currentState() pluginState {
