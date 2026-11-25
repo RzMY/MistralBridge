@@ -152,8 +152,14 @@ func handleMethod(method string, raw []byte) ([]byte, error) {
 	switch method {
 	case "plugin.register", "plugin.reconfigure":
 		return registration()
-	case "executor.identifier", "auth.identifier":
+	case "executor.identifier", "auth.identifier", "quota.identifier":
 		return okEnvelope(map[string]string{"identifier": pluginID})
+	case "quota.describe":
+		return describeNativeQuota()
+	case "quota.fetch":
+		return fetchNativeQuota(raw)
+	case "quota.reset":
+		return okEnvelope(map[string]any{"success": false, "message": "Mistral 月度额度由上游管理，插件不支持重置"})
 	case "model.static":
 		return staticModels(raw)
 	case "model.for_auth":
@@ -208,6 +214,7 @@ func registration() ([]byte, error) {
 			"management_api":          true,
 			"thinking_applier":        true,
 			"usage_plugin":            true,
+			"quota_provider":          true,
 		},
 	})
 }

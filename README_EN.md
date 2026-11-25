@@ -101,6 +101,8 @@ Open **请求编辑** (Request editing) to configure input transformations. For 
 
 ## Quotas, logs, and data
 
+CPA native credential quota is available through the standard plugin quota provider: plan, Vibe/Studio pools, balances, reset times and shared five-minute caching. Panel support varies; see [native quota and compatibility](docs/native-cpa.md).
+
 | Item | Behavior |
 | --- | --- |
 | Debug details | Off by default. When enabled, full upstream requests and responses are stored and may contain prompts and model output. Authentication headers and the configured key are redacted. Up to 100 records and 256 MiB are retained. A record exceeding the storage limit is skipped. Disabling debug mode does not clear existing records. |

@@ -42,6 +42,7 @@ flowchart LR
 | `thinking_applier` | 将 CPA 思考级别写入请求字段 |
 | `management_api` | 注册控制台页面与管理路由 |
 | `usage_plugin` | 注册用量回调，目前返回空结果 |
+| `quota_provider` | 将双池计费额度转换为 CPA 原生套餐、金额摘要与额度组 |
 
 `executor.count_tokens` 返回 HTTP 501，因为当前上游路由不提供此插件能力。
 
@@ -175,3 +176,5 @@ CPA v8.0.78 的 Responses 调用实际可能保留原始 `OriginalRequest`，同
 发布工作流固定使用 Go 1.26.11。推送到 `main` 会为 Linux、macOS 和 Windows 的 amd64、arm64 构建六个平台包。单平台包保留 7 天，合并后的完整产物保留 14 天。推送 `vX.Y.Z` 数字版本 tag 会创建 Release 草稿。每个 ZIP 只包含对应动态库，平台资产名为 `mistral-bridge_<version>_<goos>_<goarch>.zip`，发布集合同时提供 `checksums.txt`。
 
 手动安装时，将动态库放入 CPA 插件目录对应的平台和架构目录，例如 Linux amd64 使用 `plugins/linux/amd64/mistral-bridge.so`。在 CPA 配置中启用 `mistral-bridge` 后重启 CPA。Docker 部署需要持久化插件目录和 `<auth-dir>` 数据目录。更多面向使用者的安装步骤见 [README](../README.md)。
+
+`native_quota.go` 对接 CPA 标准额度 RPC，托管凭证通过 `refreshKeyQuotas` 与插件页面共享缓存及持久化；独立导入凭证使用自身计费身份。该能力只报告额度，不改写调度冷却。接口与面板兼容性见 [原生额度](native-cpa.md#原生凭证额度)。

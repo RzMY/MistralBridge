@@ -94,16 +94,25 @@ func refreshQuota(body []byte, callbackID string) ([]byte, error) {
 	if json.Unmarshal(body, &input) != nil || input.ID == "" {
 		return managementJSONStatus(400, map[string]string{"error": "请选择凭证"})
 	}
-	lock, _ := quotaLocks.LoadOrStore(input.ID, &sync.Mutex{})
+	key, err := refreshKeyQuotas(input.ID, input.Force, callbackID)
+	if err != nil {
+		return mutationError(err)
+	}
+	return managementJSON(publicKey(key))
+}
+
+// Both the plugin console and CPA's quota provider share persistence and cache.
+func refreshKeyQuotas(id string, force bool, callbackID string) (apiKey, error) {
+	lock, _ := quotaLocks.LoadOrStore(id, &sync.Mutex{})
 	mutex := lock.(*sync.Mutex)
 	mutex.Lock()
 	defer mutex.Unlock()
-	key, ok := getKey(input.ID)
+	key, ok := getKey(id)
 	if !ok {
-		return managementJSONStatus(404, map[string]string{"error": "凭证不存在"})
+		return apiKey{}, &statusError{404, "凭证不存在"}
 	}
-	if key.Quotas != nil && time.Since(key.Quotas.UpdatedAt) < 5*time.Minute && !input.Force {
-		return managementJSON(publicKey(key))
+	if key.Quotas != nil && time.Since(key.Quotas.UpdatedAt) < 5*time.Minute && !force {
+		return key, nil
 	}
 	quotas, source, err := fetchKeyQuotas(key, callbackID)
 	if err != nil {
@@ -147,9 +156,9 @@ func refreshQuota(body []byte, callbackID string) ([]byte, error) {
 		}
 		return &statusError{404, "凭证已删除"}
 	}); err != nil {
-		return mutationError(err)
+		return apiKey{}, err
 	}
-	return managementJSON(publicKey(key))
+	return key, nil
 }
 
 func quotaJSON(endpoint string, key apiKey, callbackID string, result any) error {

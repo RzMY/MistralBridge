@@ -61,6 +61,23 @@ routing:
 
 独立凭证使用插件中未绑定 Key 的模型映射。请使用 `mistral_base_url`，不添加 `compat_name`；不要将同一个 `mistral-bridge` provider 同时配置成 OpenAI-compatible，否则 CPA 会优先采用其原生兼容执行器。独立导入凭证由 CPA 管理，不出现在插件自己的 Key/额度列表中。
 
+## 原生凭证额度
+
+插件声明 CPA 的 `quota_provider` 能力，并实现 `quota.identifier`、`quota.describe`、`quota.fetch`。原生凭证列表返回 `supports_quota=true` 和 `quota_provider=mistral-bridge`，支持该标准接口的 CPA 管理页会显示额度刷新入口。
+
+- Vibe 和 Studio / API 分组展示，当前使用渠道排在前面并有文字标识。
+- 返回套餐、剩余比例、重置时间，以及两个池的剩余／已用／月度金额。按量付费状态和数据时间放在额度说明中。
+- 与插件页面共用按 Key 的五分钟缓存、并发合并和历史值持久化；插件页面强制刷新后，CPA 原生入口立即读取更新后的结果。CPA 的标准额度 RPC 不提供强制刷新参数。
+- 单池失败保留该池历史值及原时间，显式标注“历史数据”和刷新错误；缺少历史数据时不伪造零余额。全部池不可用且无历史值时返回错误。
+- 禁用的凭证仍可查看额度。直接导入 CPA 的独立 Mistral 凭证也支持查询，使用自身 Key；其结果不写入插件管理的 Key 列表。
+- 自定义 API 地址仍不查询 Mistral 官方计费接口。额度由 Mistral 管理，不提供额度重置操作；CPA 的路由冷却重置是另一个独立功能。
+
+可通过 `POST /v0/management/quota/fetch`，或 `POST /v0/management/plugins/mistral-bridge/quota`，提交 `{"auth_index":"CPA凭证索引"}` 获取标准额度响应。描述接口为 `GET /v0/management/quota/providers`。额度接口沿用 CPA 管理鉴权，不需要提交上游 Key。
+
+2026-11-25 实测远端 `8317` 端口的 CPA 自带管理页支持上述通用插件额度显示；该机器 `18317` 端口的 CPAMP 版本没有消费 `supports_quota`／`quota_provider` 通用接口，需其面板提供支持后才可在 CPAMP 凭证卡片中显示。插件额度接口不要求替换 CPA 或 CPAMP。
+
+`scripts/check_native_quota_cpa.py` 在隔离 CPA v8.0.78 中使用临时 CA、本地 TLS 模拟代理和 `mock-*` 凭据，验证能力发现、双池归一化、缓存共享、刷新、部分失败、停用凭证和独立导入。代理不会建立外部连接，不读取正式环境凭据。
+
 ## 同步故障
 
 插件状态与 CPA 原生凭证是两个存储。同步失败返回 HTTP 503 和明确错误，保留已保存的插件状态；请重试相同保存或模型同步。缺失或已删除的选中凭证会拒绝请求，执行器不会自行换 Key。引用文件可通过重新打开插件或重新发布模型修复；涉及已有原生策略的失败修改应重试相同保存操作。
