@@ -140,6 +140,7 @@
     snapshot.keys ||= []; snapshot.models ||= []; snapshot.catalog ||= [];
     snapshot.debug_mode = Boolean(snapshot.debug_mode);
     snapshot.proxy_url ||= "";
+ snapshot.proxies ||= [];
     snapshot.request_edit ||= { builtin_enabled: true, auto_drop_incompatible: true, rules: [] };
     snapshot.request_edit.auto_drop_incompatible ??= true;
     snapshot.request_edit.rules ||= [];
@@ -162,12 +163,19 @@
     if (name === "requests") loadLogs().catch(showError);
     if (name === "keys") refreshQuotas(false);
   }
-  function renderProxy() {
+  function proxyAddress(value) {
+ try { const url = new URL(value); if (url.username || url.password) { url.username="***";url.password=""; } return url.href.replace(/\/$/, ""); } catch { return value; }
+ }
+ function renderProxy() {
+ $("proxyPoolList").innerHTML = (snapshot.proxies || []).length ? snapshot.proxies.map(proxy => {
+ const used = snapshot.keys.filter(key => key.proxy_mode === "pool" && key.proxy_id === proxy.id).length;
+ return `<div class="proxy-pool-row"><div><strong>${escapeHTML(proxy.name)}</strong><div class="sub mono">${escapeHTML(proxyAddress(proxy.url))}</div><div class="sub">${used} 个凭证正在使用</div></div><div class="actions"><button class="btn small" type="button" data-edit-proxy="${escapeHTML(proxy.id)}">编辑</button><button class="btn small btn-danger" type="button" data-delete-proxy="${escapeHTML(proxy.id)}">删除</button></div></div>`;
+ }).join("") : '<div class="empty">尚未添加代理。添加后可在凭证中选择。</div>';
     // Background quota refreshes must not overwrite an unsaved proxy edit.
     if (!$("proxyForm").contains(document.activeElement) && $("proxyUrl").dataset.dirty !== "true") {
       $("proxyUrl").value = snapshot.proxy_url;
     }
-    $("proxyStatus").textContent = snapshot.proxy_url ? "独立代理已配置" : "沿用 CPA 配置";
+    $("proxyStatus").textContent = snapshot.proxy_url === "direct" ? "默认直连" : snapshot.proxy_url ? "默认代理已配置" : "沿用 CPA 全局配置";
     $("proxyStatus").classList.toggle("success", Boolean(snapshot.proxy_url));
   }
   async function saveProxy(proxyUrl) {
@@ -180,8 +188,8 @@
       snapshot.proxy_url = result.proxy_url || "";
       $("proxyUrl").value = snapshot.proxy_url;
       delete $("proxyUrl").dataset.dirty;
-      renderProxy();
-      notify(snapshot.proxy_url ? "独立代理已保存，新请求将使用此代理" : "已恢复沿用 CPA 的代理配置");
+      await loadState();
+      notify(snapshot.proxy_url ? "默认代理已保存，将应用于未配置独立代理的凭证" : "已恢复沿用 CPA 的代理配置");
     } catch (error) { $("proxyError").textContent = error.message; }
     finally {
       controls.forEach(control => { control.disabled = false; });
@@ -496,7 +504,7 @@
       const sourceName = source === "chat" ? "Vibe Key" : source === "api" ? "Studio Key" : source ? `其他来源（${source}）` : "待查询";
       const active = activeKeyChannel(key);
       const channelName = active === "vibe" ? "Vibe" : active === "studio" ? "Studio / API" : "待识别，可手动选择";
-      return `<article class="key-card"><div class="key-main"><div><div class="key-name">${escapeHTML(key.label)}<span class="badge ${key.enabled ? "success" : ""}">${key.enabled ? "已启用" : "已停用"}</span></div><div class="sub mono">${escapeHTML(key.masked)}</div><div class="sub mono">${escapeHTML(key.base_url || "https://api.mistral.ai/v1")}</div><div class="key-meta"><span class="badge">优先级 ${Number(key.priority || 0)}</span></div></div>
+      return `<article class="key-card"><div class="key-main"><div><div class="key-name">${escapeHTML(key.label)}<span class="badge ${key.enabled ? "success" : ""}">${key.enabled ? "已启用" : "已停用"}</span></div><div class="sub mono">${escapeHTML(key.masked)}</div><div class="sub mono">${escapeHTML(key.base_url || "https://api.mistral.ai/v1")}</div><div class="key-meta"><span class="badge">优先级 ${Number(key.priority || 0)}</span><span class="badge" title="${escapeHTML(key.proxy_address || "")}">${escapeHTML(key.proxy_label || "CPA 全局配置")}</span></div></div>
       ${renderKeyQuota(key, "vibe")}${renderKeyQuota(key, "studio")}</div>
       <div class="key-channel"><div><div class="sub">创建来源：${escapeHTML(sourceName)}</div><div>当前请求渠道：<strong>${escapeHTML(channelName)}</strong>${key.enabled ? "" : "（凭证已停用）"}</div>${active === "studio" && source === "chat" ? '<div class="sub channel-note">Studio 渠道使用上游默认计费；Vibe 来源 Key 仍可能扣 Vibe 池。</div>' : ""}</div><div class="segments" role="group" aria-label="${escapeHTML(key.label)} 的使用渠道">${[["auto", "按来源"], ["vibe", "Vibe"], ["studio", "Studio / API"]].map(([channel, label]) => `<button type="button" data-channel-key="${escapeHTML(key.id)}" data-channel="${channel}" aria-pressed="${(key.channel || "auto") === channel}" ${switchingKeys.has(key.id) ? "disabled" : ""}>${label}</button>`).join("")}</div></div>
       <div class="key-bottom"><span class="sub">切换渠道后，新请求按所选渠道发送。</span><div class="actions"><button class="switch" role="switch" aria-checked="${key.enabled}" data-toggle-key="${escapeHTML(key.id)}" type="button"><span class="switch-track"></span>${key.enabled ? "已启用" : "已停用"}</button><button class="btn small" data-quota-key="${escapeHTML(key.id)}" type="button" ${refreshingKeys.has(key.id) ? "disabled" : ""}>${refreshingKeys.has(key.id) ? "刷新中…" : "↻ 额度"}</button><button class="btn small" data-test-key="${escapeHTML(key.id)}" type="button">测试</button><button class="btn small" data-edit-key="${escapeHTML(key.id)}" type="button">编辑</button><button class="btn small btn-danger" data-delete-key="${escapeHTML(key.id)}" type="button">删除</button></div></div></article>`;
@@ -521,12 +529,22 @@
     const worker = async () => { while (pending.length) await refreshKeyQuota(pending.shift(), force); };
     await Promise.all([worker(), worker()]);
   }
-  function openKey(key = null) {
+  function openPoolProxy(proxy = null) {
+ $("poolProxyForm").reset(); $("poolProxyId").value=proxy?.id || "";
+ $("poolProxyName").value=proxy?.name || ""; $("poolProxyUrl").value=proxy?.url || "";
+ $("poolProxyTitle").textContent=proxy ? "编辑代理" : "添加代理";
+ $("poolProxyError").textContent=""; $("poolProxyDialog").showModal();
+ }
+ function openKey(key = null) {
     $("keyForm").reset(); $("keyId").value = key?.id || "";
     $("keyLabel").value = key?.label || "";
     $("baseUrl").value = key?.base_url || "https://api.mistral.ai/v1";
     $("keyPriority").value = key?.priority || 0;
     $("keyChannel").value = key?.channel || "auto";
+ $("keyProxy").innerHTML = '<option value="inherit">默认代理 / CPA 全局配置</option><option value="direct">独立直连</option>' + (key?.proxy_mode === "native" ? '<option value="native">保留 CPA 独立代理</option>' : "") + snapshot.proxies.map(proxy => `<option value="pool:${escapeHTML(proxy.id)}">代理池 · ${escapeHTML(proxy.name)}</option>`).join("");
+ $("keyProxy").value = key?.proxy_mode === "pool" ? `pool:${key.proxy_id}` : (key?.proxy_mode || "inherit");
+ $("keyProxy").dataset.initial = $("keyProxy").value;
+ $("keyProxyHint").textContent = key ? `当前：${key.proxy_label || "CPA 全局配置"}${key.proxy_address ? " · " + key.proxy_address : ""}。修改选择会同步至 CPA。` : "选择代理池后同步至 CPA 原生凭证。";
     $("apiSecret").required = !key;
     $("apiSecret").placeholder = key ? "留空保留当前密钥" : "粘贴 API Key";
     $("keyDialogTitle").textContent = key ? "编辑凭证" : "添加凭证";
@@ -657,11 +675,26 @@
       managementKey = $("managementKey").value.trim(); storeSessionKey(managementKey); await connect();
     });
   });
+  $("addPoolProxy").addEventListener("click", () => openPoolProxy());
+  $("poolProxyForm").addEventListener("submit", async event => {
+    event.preventDefault(); const form=event.currentTarget,id=$("poolProxyId").value;
+    await busy(form.querySelector('[type="submit"]'), async () => {
+      $("poolProxyError").textContent="";
+      try { await api("/proxies",jsonOptions(id ? "PATCH" : "POST",{id,name:$("poolProxyName").value.trim(),url:$("poolProxyUrl").value.trim()})); }
+      catch(error) {$("poolProxyError").textContent=error.message;return;}
+      $("poolProxyDialog").close();await loadState();notify("代理已保存");
+    });
+  });
   $("keyForm").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget, id = $("keyId").value;
     const old = snapshot.keys.find(key => key.id === id);
     const input = { id, label: $("keyLabel").value.trim(), secret: $("apiSecret").value.trim(), base_url: $("baseUrl").value.trim(), priority: Number($("keyPriority").value), channel: $("keyChannel").value, enabled: old ? old.enabled : true };
+    const proxyChoice=$("keyProxy").value;
+    if (proxyChoice !== $("keyProxy").dataset.initial || !id) {
+      if (proxyChoice.startsWith("pool:")) { input.proxy_mode="pool";input.proxy_id=proxyChoice.slice(5); }
+      else if (proxyChoice !== "native") { input.proxy_mode=proxyChoice;input.proxy_id=""; }
+    }
     await busy(form.querySelector('[type="submit"]'), async () => {
       $("keyError").textContent = "";
       let key;
@@ -760,6 +793,8 @@
       $("customRange").classList.toggle("hidden", range !== "custom");
       if (range !== "custom") reloadFirstPage();
     }
+    if (data.editProxy) openPoolProxy(snapshot.proxies.find(proxy => proxy.id === data.editProxy));
+    if (data.deleteProxy && confirm("删除此代理？仍被绑定的代理需要先解除绑定。")) busy(button,async () => {await api("/proxies",jsonOptions("DELETE",{id:data.deleteProxy}));await loadState();notify("代理已删除");});
     if (data.editKey) openKey(snapshot.keys.find(key => key.id === data.editKey));
     if (data.quotaKey) refreshKeyQuota(data.quotaKey, true);
     if (data.channelKey) switchKeyChannel(data.channelKey, data.channel);

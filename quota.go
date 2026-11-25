@@ -102,7 +102,7 @@ func refreshQuota(body []byte, callbackID string) ([]byte, error) {
 }
 
 // Both the plugin console and CPA's quota provider share persistence and cache.
-func refreshKeyQuotas(id string, force bool, callbackID string) (apiKey, error) {
+func refreshKeyQuotas(id string, force bool, callbackID string, nativeProxy ...string) (apiKey, error) {
 	lock, _ := quotaLocks.LoadOrStore(id, &sync.Mutex{})
 	mutex := lock.(*sync.Mutex)
 	mutex.Lock()
@@ -113,6 +113,9 @@ func refreshKeyQuotas(id string, force bool, callbackID string) (apiKey, error) 
 	}
 	if key.Quotas != nil && time.Since(key.Quotas.UpdatedAt) < 5*time.Minute && !force {
 		return key, nil
+	}
+	if len(nativeProxy) > 0 {
+		key.NativeProxyURL = &nativeProxy[0]
 	}
 	quotas, source, err := fetchKeyQuotas(key, callbackID)
 	if err != nil {
@@ -162,7 +165,11 @@ func refreshKeyQuotas(id string, force bool, callbackID string) (apiKey, error) 
 }
 
 func quotaJSON(endpoint string, key apiKey, callbackID string, result any) error {
-	raw, err := doUpstreamHTTP(nil, upstreamRequest{Method: http.MethodGet, URL: endpoint, Headers: http.Header{"Authorization": {"Bearer " + key.Secret}, "Accept": {"application/json"}}, HostCallbackID: callbackID}, currentState().ProxyURL)
+	proxyURL, err := credentialProxyURL(currentState(), key)
+	if err != nil {
+		return err
+	}
+	raw, err := doUpstreamHTTP(nil, upstreamRequest{Method: http.MethodGet, URL: endpoint, Headers: http.Header{"Authorization": {"Bearer " + key.Secret}, "Accept": {"application/json"}}, HostCallbackID: callbackID}, proxyURL)
 	if err != nil {
 		return fmt.Errorf("额度服务暂时无法连接")
 	}
@@ -199,8 +206,13 @@ func fetchQuota(key apiKey, callbackID string) (keyQuota, error) {
 }
 
 func fetchKeyQuotas(key apiKey, callbackID string) (keyQuotas, string, error) {
+	proxyURL, proxyErr := credentialProxyURL(currentState(), key)
+	key.NativeProxyURL = &proxyURL
 	now := time.Now().UTC()
 	quotas := keyQuotas{UpdatedAt: now, Vibe: keyQuota{Kind: "chat", UpdatedAt: now}, Studio: keyQuota{Kind: "api", UpdatedAt: now}}
+	if proxyErr != nil {
+		return quotas, "", proxyErr
+	}
 	base := strings.TrimRight(key.BaseURL, "/")
 	if base == "" {
 		base = defaultBaseURL

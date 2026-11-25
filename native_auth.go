@@ -149,12 +149,16 @@ func selectedNativeKey(req rpcExecutorRequest) (apiKey, error) {
 		if !exists {
 			return apiKey{}, &statusError{401, "Selected Mistral credential is no longer available"}
 		}
+		proxyURL := authString(doc, "proxy_url")
+		key.NativeProxyURL = &proxyURL
 		return key, nil
 	}
 	key := apiKey{ID: req.AuthID, Secret: strings.TrimSpace(authString(doc, "api_key")), Label: authString(doc, "label"), BaseURL: authString(doc, "mistral_base_url"), Enabled: true, Channel: authString(doc, "channel"), Source: authString(doc, "source")}
 	if key.Secret == "" {
 		return apiKey{}, &statusError{401, "Selected Mistral credential has no API key"}
 	}
+	proxyURL := authString(doc, "proxy_url")
+	key.NativeProxyURL = &proxyURL
 	return key, nil
 }
 
@@ -271,11 +275,16 @@ func syncNativeAuths(before *pluginState, force bool) error {
 				}
 			}
 		}
+		old, hadOld := previous[key.ID]
+		proxyChanged, err := syncNativeKeyProxy(doc, key, snapshot, old, hadOld, existing)
+		if err != nil {
+			return err
+		}
 		savedRevision := authString(doc, "bridge_models_revision")
 		// A revision change makes CPA refresh model eligibility, including bindings.
 		doc["bridge_models_revision"] = modelRevision(snapshot.Models)
 		encoded, _ := json.Marshal(doc)
-		if existing && index != "" && before == nil && !force && savedRevision == modelRevision(snapshot.Models) {
+		if existing && index != "" && before == nil && !force && !proxyChanged && savedRevision == modelRevision(snapshot.Models) {
 			nativeMetadata.Store(key.ID, doc)
 			continue
 		}
@@ -364,9 +373,10 @@ func nativeEnabled(key apiKey) bool {
 // plugin snapshot. Unrelated edits do not rewrite CPA's scheduling policy.
 func nativeEditBaseline(before *pluginState, body []byte, toggle bool) {
 	var input struct {
-		ID       string `json:"id"`
-		Enabled  *bool  `json:"enabled"`
-		Priority *int   `json:"priority"`
+		ID        string  `json:"id"`
+		Enabled   *bool   `json:"enabled"`
+		Priority  *int    `json:"priority"`
+		ProxyMode *string `json:"proxy_mode"`
 	}
 	if json.Unmarshal(body, &input) != nil {
 		return
@@ -374,6 +384,9 @@ func nativeEditBaseline(before *pluginState, body []byte, toggle bool) {
 	for i := range before.Keys {
 		if before.Keys[i].ID != input.ID {
 			continue
+		}
+		if input.ProxyMode != nil {
+			before.Keys[i].ProxyMode = "explicit-edit"
 		}
 		if input.Enabled != nil {
 			before.Keys[i].Enabled = !*input.Enabled

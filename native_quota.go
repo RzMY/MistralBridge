@@ -67,7 +67,7 @@ func fetchNativeQuota(raw []byte) ([]byte, error) {
 	var key apiKey
 	if id := authString(doc, "bridge_key_id"); id != "" {
 		// Quota remains inspectable for disabled credentials; this is not admission.
-		key, err = refreshKeyQuotas(id, false, req.HostCallbackID)
+		key, err = refreshKeyQuotas(id, false, req.HostCallbackID, authString(doc, "proxy_url"))
 		if err != nil {
 			return nil, err
 		}
@@ -76,6 +76,8 @@ func fetchNativeQuota(raw []byte) ([]byte, error) {
 		if key.Secret == "" {
 			return nil, &statusError{401, "Mistral 凭证缺少 API Key"}
 		}
+		proxyURL := authString(doc, "proxy_url")
+		key.NativeProxyURL = &proxyURL
 		quotas, source, fetchErr := fetchKeyQuotas(key, req.HostCallbackID)
 		if fetchErr != nil {
 			return nil, &statusError{502, fetchErr.Error()}

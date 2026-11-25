@@ -65,6 +65,7 @@ type scheduledCompletion struct {
 	body        []byte
 	headers     http.Header
 	endpoint    string
+	proxyURL    string
 	reservation *tokenReservation
 }
 
@@ -95,6 +96,10 @@ func (s *completionScheduler) prepare(settings pluginState, req rpcExecutorReque
 	}
 	if model.KeyID != "" && model.KeyID != key.ID {
 		return scheduledCompletion{}, &statusError{404, "Selected CPA credential is not bound to this model"}
+	}
+	proxyURL, err := credentialProxyURL(settings, key)
+	if err != nil {
+		return scheduledCompletion{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -132,7 +137,7 @@ func (s *completionScheduler) prepare(settings pluginState, req rpcExecutorReque
 		bucket.nextRequest = now.Add(time.Duration(math.Ceil(float64(time.Second) / limit.RPS)))
 	}
 	trace.resolved(key, model, body)
-	return scheduledCompletion{key, model, body, headers, endpoint, reservation}, nil
+	return scheduledCompletion{key, model, body, headers, endpoint, proxyURL, reservation}, nil
 }
 
 func (b *rateBucket) availableAt(now time.Time, limit modelRateLimit, estimate int) time.Time {

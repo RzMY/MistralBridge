@@ -16,14 +16,17 @@ import (
 
 var proxyTransports = struct {
 	sync.Mutex
-	url       string
-	transport *http.Transport
+	entries map[string]*http.Transport
+	order   []string
 }{}
 
 func normalizeProxyURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", nil
+	}
+	if strings.EqualFold(raw, "direct") || strings.EqualFold(raw, "none") {
+		return "direct", nil
 	}
 	invalid := errors.New("请输入有效的 HTTP、HTTPS、SOCKS5 或 SOCKS5H 代理地址")
 	parsed, err := url.Parse(raw)
@@ -71,31 +74,44 @@ func updateProxy(body []byte) ([]byte, error) {
 func closeProxyTransport() {
 	proxyTransports.Lock()
 	defer proxyTransports.Unlock()
-	if proxyTransports.transport != nil {
-		proxyTransports.transport.CloseIdleConnections()
+	for _, transport := range proxyTransports.entries {
+		transport.CloseIdleConnections()
 	}
-	proxyTransports.transport = nil
-	proxyTransports.url = ""
+	proxyTransports.entries = nil
+	proxyTransports.order = nil
 }
 
 func transportForProxy(proxyURL string) *http.Transport {
 	proxyTransports.Lock()
 	defer proxyTransports.Unlock()
-	if proxyTransports.transport == nil || proxyTransports.url != proxyURL {
-		if proxyTransports.transport != nil {
-			proxyTransports.transport.CloseIdleConnections()
-		}
-		parsed, _ := url.Parse(proxyURL)
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.Proxy = http.ProxyURL(parsed)
-		transport.ResponseHeaderTimeout = 2 * time.Minute
-		proxyTransports.url, proxyTransports.transport = proxyURL, transport
+	if existing := proxyTransports.entries[proxyURL]; existing != nil {
+		return existing
 	}
-	return proxyTransports.transport
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	if proxyURL != "direct" {
+		parsed, _ := url.Parse(proxyURL)
+		transport.Proxy = http.ProxyURL(parsed)
+	}
+	transport.ResponseHeaderTimeout = 2 * time.Minute
+	if proxyTransports.entries == nil {
+		proxyTransports.entries = make(map[string]*http.Transport)
+	}
+	// Bound retired proxy credentials while preserving active streams on eviction.
+	if len(proxyTransports.order) >= 64 {
+		oldest := proxyTransports.order[0]
+		proxyTransports.order = proxyTransports.order[1:]
+		proxyTransports.entries[oldest].CloseIdleConnections()
+		delete(proxyTransports.entries, oldest)
+	}
+	proxyTransports.entries[proxyURL] = transport
+	proxyTransports.order = append(proxyTransports.order, proxyURL)
+	return transport
 }
 
 // CPA's HTTP callback does not accept a proxy override. Only explicit plugin
-// proxies use a local transport; an empty setting preserves CPA's HTTP policy.
+// proxies (including native credential proxies) use a local transport; an empty
+// setting preserves CPA's global HTTP policy. Explicit direct bypasses env proxies.
 func doUpstreamHTTP(ctx context.Context, request upstreamRequest, proxyURL string) (json.RawMessage, error) {
 	if strings.TrimSpace(proxyURL) == "" {
 		return hostCall("host.http.do", request)
@@ -165,7 +181,7 @@ func proxyHTTPRequest(ctx context.Context, request upstreamRequest, rawProxy str
 	response, err := client.Do(httpRequest)
 	if err != nil {
 		cleanup()
-		return nil, nil, err
+		return nil, nil, errors.New("upstream request through configured proxy failed")
 	}
 	return response, cleanup, nil
 }

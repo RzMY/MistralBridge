@@ -79,7 +79,7 @@ func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *reque
 	defer prepared.reservation.finish(nil)
 	callbackReq := upstreamRequest{Method: http.MethodPost, URL: endpoint, Headers: headers, Body: body, HostCallbackID: req.HostCallbackID}
 	trace.captureRequest(callbackReq.Method, callbackReq.URL, callbackReq.Headers, callbackReq.Body)
-	responseRaw, err := doUpstreamHTTP(ctx, callbackReq, settings.ProxyURL)
+	responseRaw, err := doUpstreamHTTP(ctx, callbackReq, prepared.proxyURL)
 	if err != nil {
 		trace.captureResponseError(err)
 		return nil, nil, &statusError{Status: 502, Message: "Mistral API request failed"}
@@ -124,7 +124,7 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 	stream, err := openUpstreamHTTPStream(ctx, upstreamRequest{
 		Method: http.MethodPost, URL: endpoint, Headers: headers,
 		Body: body, HostCallbackID: req.HostCallbackID,
-	}, settings.ProxyURL)
+	}, prepared.proxyURL)
 	if err != nil {
 		trace.captureResponseError(err)
 		return nil, &statusError{Status: 502, Message: "Mistral streaming request failed"}

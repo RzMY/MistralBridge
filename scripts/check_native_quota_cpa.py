@@ -38,6 +38,7 @@ def run(args):
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.load_cert_chain(cert, key)
     calls = []
+    tunnels = []
     scenario = {"vibe_percent": 25, "partial": False, "offline": False}
 
     class MockTLS(BaseHTTPRequestHandler):
@@ -79,6 +80,7 @@ def run(args):
             if self.path not in {"api.mistral.ai:443", "console.mistral.ai:443"}:
                 self.send_error(403)
                 return
+            tunnels.append(getattr(self.server,"tag","pool"))
             self.send_response(200)
             self.end_headers()
             self.wfile.flush()
@@ -88,6 +90,9 @@ def run(args):
 
     proxy = ThreadingHTTPServer(("127.0.0.1", 0), MockProxy)
     threading.Thread(target=proxy.serve_forever, daemon=True).start()
+    native_proxy = ThreadingHTTPServer(("127.0.0.1", 0), MockProxy)
+    native_proxy.tag = "native"
+    threading.Thread(target=native_proxy.serve_forever, daemon=True).start()
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
         port = reserved.getsockname()[1]
@@ -100,9 +105,9 @@ def run(args):
     }
     (root / "config.yaml").write_text(json.dumps(config))
     state = {
-        "keys": [{"id": "one", "label": "Quota Mock", "secret": "mock-one", "base_url": "https://api.mistral.ai/v1", "enabled": True, "channel": "vibe"}],
+        "keys": [{"id": "one", "label": "Quota Mock", "secret": "mock-one", "base_url": "https://api.mistral.ai/v1", "enabled": True, "channel": "vibe", "proxy_mode": "pool", "proxy_id": "billing-proxy"}],
         "models": [{"id": "model", "client_model": "quota-test", "upstream_model": "mock", "enabled": True}],
-        "catalog": [], "proxy_url": f"http://127.0.0.1:{proxy.server_port}",
+        "catalog": [], "proxy_url": "http://127.0.0.1:1", "proxies": [{"id":"billing-proxy","name":"Billing mock","url":f"http://127.0.0.1:{proxy.server_port}"}],
     }
     (data / "state.json").write_text(json.dumps(state))
     container = "mistralbridge-quota-" + uuid.uuid4().hex[:8]
@@ -160,11 +165,16 @@ def run(args):
         console = api("/v0/management/plugins/mistral-bridge/keys/quota", {"id": "one"}, "POST")
         assert console["quotas"]["vibe"]["remaining"] == 150 and len(calls) == 3
         passed("native and plugin quota endpoints share the same five-minute cache")
+        assert tunnels and all(t == "pool" for t in tunnels)
+        passed("native billing refresh uses the bound proxy pool instead of plugin default")
+        api("/v0/management/auth-files/fields", {"name":native["name"],"proxy_url":f"http://127.0.0.1:{native_proxy.server_port}"}, "PATCH")
         scenario["vibe_percent"] = 40
         api("/v0/management/plugins/mistral-bridge/keys/quota", {"id": "one", "force": True}, "POST")
         quota = api("/v0/management/quota/fetch", body, "POST")
         assert quota["groups"][0]["buckets"][0]["remainingFraction"] == .6 and len(calls) == 6
         passed("forced plugin refresh updates native quota immediately")
+        assert "native" in tunnels
+        passed("CPA credential proxy edits apply to plugin billing refresh")
         scenario["partial"] = True
         api("/v0/management/plugins/mistral-bridge/keys/quota", {"id": "one", "force": True}, "POST")
         quota = api("/v0/management/quota/fetch", body, "POST")
@@ -183,7 +193,7 @@ def run(args):
         assert all("HTTP 503" in g["buckets"][0]["description"] for g in quota["groups"])
         passed("upstream outages show dated historical values instead of fabricated quota")
         scenario.update(offline=False, partial=False)
-        api("/v0/management/auth-files?name=direct-quota.json", {"type": "mistral-bridge", "api_key": "mock-direct", "channel": "studio", "label": "Direct Mock"}, "POST")
+        api("/v0/management/auth-files?name=direct-quota.json", {"type": "mistral-bridge", "api_key": "mock-direct", "channel": "studio", "label": "Direct Mock", "proxy_url": f"http://127.0.0.1:{native_proxy.server_port}"}, "POST")
         direct = next(f for f in api("/v0/management/auth-files")["files"] if f["name"] == "direct-quota.json")
         quota = api("/v0/management/quota/fetch", {"auth_index": direct["auth_index"]}, "POST")
         assert quota["groups"][0]["displayName"] == "Studio / API · 当前渠道" and quota["summary"][0]["value"] == 10
@@ -199,6 +209,7 @@ def run(args):
         (root / "cpa.log").write_text(logs.stdout + logs.stderr)
         subprocess.run(["docker", "rm", "-f", container], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         proxy.shutdown()
+        native_proxy.shutdown()
         (root / "report.json").write_text(json.dumps(report, indent=2) + "\n")
 
 

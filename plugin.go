@@ -48,17 +48,20 @@ var consolePage = func() []byte {
 }()
 
 type apiKey struct {
-	ID        string     `json:"id"`
-	Label     string     `json:"label"`
-	Secret    string     `json:"secret"`
-	BaseURL   string     `json:"base_url,omitempty"`
-	Enabled   bool       `json:"enabled"`
-	Priority  int        `json:"priority"`
-	Channel   string     `json:"channel,omitempty"`
-	Source    string     `json:"source,omitempty"`
-	Quotas    *keyQuotas `json:"quotas,omitempty"`
-	Quota     *keyQuota  `json:"quota,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	ProxyMode      string     `json:"proxy_mode,omitempty"`
+	ProxyID        string     `json:"proxy_id,omitempty"`
+	NativeProxyURL *string    `json:"-"`
+	ID             string     `json:"id"`
+	Label          string     `json:"label"`
+	Secret         string     `json:"secret"`
+	BaseURL        string     `json:"base_url,omitempty"`
+	Enabled        bool       `json:"enabled"`
+	Priority       int        `json:"priority"`
+	Channel        string     `json:"channel,omitempty"`
+	Source         string     `json:"source,omitempty"`
+	Quotas         *keyQuotas `json:"quotas,omitempty"`
+	Quota          *keyQuota  `json:"quota,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type modelMapping struct {
@@ -98,6 +101,7 @@ type RequestLog struct {
 }
 
 type pluginState struct {
+	Proxies     []proxyEntry       `json:"proxies,omitempty"`
 	Keys        []apiKey           `json:"keys"`
 	Catalog     []string           `json:"catalog"`
 	Models      []modelMapping     `json:"models"`
@@ -108,6 +112,7 @@ type pluginState struct {
 }
 
 type safeKey struct {
+	keyProxyView
 	ID            string     `json:"id"`
 	Label         string     `json:"label"`
 	Masked        string     `json:"masked"`
@@ -319,6 +324,9 @@ func managementRoutes() []map[string]string {
 	paths := []struct{ method, path string }{
 		{"GET", "/plugins/mistral-bridge/state"},
 		{"PATCH", "/plugins/mistral-bridge/proxy"},
+		{"POST", "/plugins/mistral-bridge/proxies"},
+		{"PATCH", "/plugins/mistral-bridge/proxies"},
+		{"DELETE", "/plugins/mistral-bridge/proxies"},
 		{"PATCH", "/plugins/mistral-bridge/request-edit"},
 		{"POST", "/plugins/mistral-bridge/request-edit/preview"},
 		{"GET", "/plugins/mistral-bridge/request-edit/debug-records"},
@@ -369,6 +377,12 @@ func routeManagement(raw []byte) ([]byte, error) {
 	switch {
 	case method == http.MethodGet && path == "/state":
 		return managementJSON(publicState())
+	case method == http.MethodPost && path == "/proxies":
+		return saveProxyEntry(req.Body, false)
+	case method == http.MethodPatch && path == "/proxies":
+		return saveProxyEntry(req.Body, true)
+	case method == http.MethodDelete && path == "/proxies":
+		return deleteProxyEntry(req.Body)
 	case method == http.MethodPatch && path == "/proxy":
 		return updateProxy(req.Body)
 	case method == http.MethodPatch && path == "/request-edit":
@@ -449,6 +463,7 @@ func mutateState(change func(*pluginState) error) error {
 	stateMu.Lock()
 	before := state
 	state.Keys = append([]apiKey(nil), state.Keys...)
+	state.Proxies = append([]proxyEntry(nil), state.Proxies...)
 	state.Models = append([]modelMapping(nil), state.Models...)
 	state.Catalog = append([]string(nil), state.Catalog...)
 	state.RequestEdit = cloneRequestEdit(state.RequestEdit)
@@ -518,6 +533,9 @@ func saveKey(body []byte, editing bool) ([]byte, error) {
 				return &statusError{404, "凭证不存在"}
 			}
 			old := s.Keys[index]
+			if input.ProxyMode == "" {
+				input.ProxyMode, input.ProxyID = old.ProxyMode, old.ProxyID
+			}
 			migrateKeyQuota(&old)
 			if input.Channel == "" {
 				input.Channel = old.Channel
@@ -532,10 +550,22 @@ func saveKey(body []byte, editing bool) ([]byte, error) {
 				input.Source = keySource(old)
 				input.Quota = selectedQuota(input)
 			}
+			if input.ProxyMode != "pool" {
+				input.ProxyID = ""
+			}
+			if _, err := configuredKeyProxy(*s, input); err != nil {
+				return err
+			}
 			s.Keys[index] = input
 		} else {
 			if input.Secret == "" {
 				return &statusError{400, "请输入 API Key"}
+			}
+			if input.ProxyMode != "pool" {
+				input.ProxyID = ""
+			}
+			if _, err := configuredKeyProxy(*s, input); err != nil {
+				return err
 			}
 			input.ID = randomID()
 			input.Enabled = true
@@ -763,11 +793,15 @@ func fetchModels(key apiKey, callbackID string) ([]string, error) {
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/models"
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
+	proxyURL, err := credentialProxyURL(currentState(), key)
+	if err != nil {
+		return nil, err
+	}
 	raw, err := doUpstreamHTTP(nil, upstreamRequest{
 		Method: http.MethodGet, URL: parsed.String(),
 		Headers:        http.Header{"Authorization": []string{"Bearer " + key.Secret}, "Accept": []string{"application/json"}},
 		HostCallbackID: callbackID,
-	}, currentState().ProxyURL)
+	}, proxyURL)
 	if err != nil {
 		return nil, err
 	}
@@ -832,6 +866,7 @@ func currentState() pluginState {
 	defer stateMu.RUnlock()
 	return pluginState{
 		Keys:        append([]apiKey(nil), state.Keys...),
+		Proxies:     append([]proxyEntry{}, state.Proxies...),
 		Catalog:     append([]string{}, state.Catalog...),
 		Models:      append([]modelMapping{}, state.Models...),
 		DebugMode:   state.DebugMode,
@@ -849,7 +884,7 @@ func publicState() map[string]any {
 	stateMu.RLock()
 	published := publishedRevision
 	stateMu.RUnlock()
-	return map[string]any{"keys": keys, "catalog": snapshot.Catalog, "models": snapshot.Models, "debug_mode": snapshot.DebugMode, "proxy_url": snapshot.ProxyURL, "request_edit": snapshot.RequestEdit, "models_revision": modelRevision(snapshot.Models), "published_revision": published}
+	return map[string]any{"keys": keys, "catalog": snapshot.Catalog, "models": snapshot.Models, "debug_mode": snapshot.DebugMode, "proxy_url": snapshot.ProxyURL, "proxies": snapshot.Proxies, "request_edit": snapshot.RequestEdit, "models_revision": modelRevision(snapshot.Models), "published_revision": published}
 }
 
 func publicKey(key apiKey) safeKey {
@@ -861,7 +896,7 @@ func publicKey(key apiKey) safeKey {
 	if channel == "" {
 		channel = "auto"
 	}
-	return safeKey{ID: key.ID, Label: key.Label, Masked: "••••" + last, BaseURL: key.BaseURL, Enabled: nativeEnabled(key), Priority: nativePriority(key), Channel: channel, Source: keySource(key), ActiveChannel: activeChannel(key), Quotas: key.Quotas, Quota: selectedQuota(key), CreatedAt: key.CreatedAt}
+	return safeKey{keyProxyView: publicKeyProxy(currentState(), key), ID: key.ID, Label: key.Label, Masked: "••••" + last, BaseURL: key.BaseURL, Enabled: nativeEnabled(key), Priority: nativePriority(key), Channel: channel, Source: keySource(key), ActiveChannel: activeChannel(key), Quotas: key.Quotas, Quota: selectedQuota(key), CreatedAt: key.CreatedAt}
 }
 
 func managementJSON(value any) ([]byte, error) {
@@ -1114,7 +1149,7 @@ func handleManagement(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, err
 	}
-	mutation := req.Method != http.MethodGet && (strings.Contains(req.Path, "/keys") || strings.Contains(req.Path, "/models")) && !strings.HasSuffix(req.Path, "/quota") && !strings.HasSuffix(req.Path, "/test")
+	mutation := req.Method != http.MethodGet && (strings.Contains(req.Path, "/keys") || strings.Contains(req.Path, "/models") || strings.HasSuffix(req.Path, "/proxies")) && !strings.HasSuffix(req.Path, "/quota") && !strings.HasSuffix(req.Path, "/test")
 	if mutation {
 		nativeEditMu.Lock()
 		defer nativeEditMu.Unlock()

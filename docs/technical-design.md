@@ -178,3 +178,5 @@ CPA v8.0.78 的 Responses 调用实际可能保留原始 `OriginalRequest`，同
 手动安装时，将动态库放入 CPA 插件目录对应的平台和架构目录，例如 Linux amd64 使用 `plugins/linux/amd64/mistral-bridge.so`。在 CPA 配置中启用 `mistral-bridge` 后重启 CPA。Docker 部署需要持久化插件目录和 `<auth-dir>` 数据目录。更多面向使用者的安装步骤见 [README](../README.md)。
 
 `native_quota.go` 对接 CPA 标准额度 RPC，托管凭证通过 `refreshKeyQuotas` 与插件页面共享缓存及持久化；独立导入凭证使用自身计费身份。该能力只报告额度，不改写调度冷却。接口与面板兼容性见 [原生额度](native-cpa.md#原生凭证额度)。
+
+`proxy_pool.go` 管理命名代理、凭证绑定与 CPA `proxy_url` 的所有权协调。`selectedNativeKey` 从执行请求读取代理快照，管理目录查询读取原生凭证文件；普通与原生额度请求复用同一解析函数。`proxy.go` 按代理 URL 缓存 transport，明确直连时禁用环境代理。详见 [代理池](proxy-pool.md)。

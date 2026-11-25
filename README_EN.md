@@ -166,3 +166,5 @@ Replace the example version with the version you intend to release. Reruns updat
 Thanks to CPA for the plugin runtime, magpie for the Mistral protocol reference, and ClinePassBridge for management UI and documentation organization references. [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) · [magpie](https://github.com/yetone/magpie) · [ClinePassBridge](https://github.com/xiao-qiu-qiu/ClinePassBridge)
 
 The project icon adds a bridge element to Mistral's pixel mark to identify this community plugin. The Mistral name and original mark belong to Mistral. [Brand assets](https://mistral.ai/brand/)
+
+Per-credential proxy pools are available under **代理设置** (Proxy settings). Bind a named proxy or direct connection in the credential editor. Credential overrides take precedence over the plugin default, then CPA global policy. Pool bindings synchronize to native CPA credentials; manual CPA proxy edits relinquish pool ownership and survive unrelated edits and restarts. See [proxy pools](docs/proxy-pool.md).
