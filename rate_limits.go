@@ -35,8 +35,9 @@ var builtinRateLimits = func() map[string]modelRateLimit {
 }()
 
 type rateBucket struct {
-	nextRequest time.Time
-	tokens      []*tokenReservation
+	rpsTokens    float64
+	rpsUpdatedAt time.Time
+	tokens       []*tokenReservation
 }
 
 type tokenReservation struct {
@@ -59,6 +60,10 @@ func newCompletionScheduler() *completionScheduler {
 
 var completionLimits = newCompletionScheduler()
 
+// RPS uses a token bucket, not a fixed interval. An idle credential starts
+// with a full burst allowance, so one request at 0.5 RPS is never delayed.
+const maxRPSQueueWait = 30 * time.Second
+
 type scheduledCompletion struct {
 	key         apiKey
 	model       modelMapping
@@ -67,6 +72,7 @@ type scheduledCompletion struct {
 	endpoint    string
 	proxyURL    string
 	reservation *tokenReservation
+	waitUntil   time.Time
 }
 
 func rateScope(key apiKey, model string) [32]byte {
@@ -125,23 +131,33 @@ func (s *completionScheduler) prepare(settings pluginState, req rpcExecutorReque
 		bucket = &rateBucket{}
 		s.buckets[scope] = bucket
 	}
-	until := bucket.availableAt(now, limit, estimate)
-	if until.After(now) {
-		return scheduledCompletion{}, cooldownError(until.Sub(now))
+	// TPM is a rolling minute budget. RPS is a token bucket: brief concurrent
+	// bursts use accumulated capacity, and only requests exceeding it are paced.
+	tokenAvailable := bucket.tokenAvailableAt(now, limit, estimate)
+	if tokenAvailable.After(now) {
+		return scheduledCompletion{}, cooldownError(tokenAvailable.Sub(now))
+	}
+	sendAt, remainingRPS, rpsUpdatedAt := bucket.reserveRPS(now, limit)
+	if sendAt.Sub(now) > maxRPSQueueWait {
+		return scheduledCompletion{}, cooldownError(sendAt.Sub(now))
+	}
+	if limit.RPS > 0 {
+		bucket.rpsTokens, bucket.rpsUpdatedAt = remainingRPS, rpsUpdatedAt
 	}
 	reservation := &tokenReservation{scheduler: s, bucket: bucket, tokens: estimate}
 	if limit.TPM > 0 {
 		bucket.tokens = append(bucket.tokens, reservation)
 	}
-	if limit.RPS > 0 {
-		bucket.nextRequest = now.Add(time.Duration(math.Ceil(float64(time.Second) / limit.RPS)))
-	}
 	trace.resolved(key, model, body)
-	return scheduledCompletion{key, model, body, headers, endpoint, proxyURL, reservation}, nil
+	var waitUntil time.Time
+	if sendAt.After(now) {
+		waitUntil = sendAt
+	}
+	return scheduledCompletion{key, model, body, headers, endpoint, proxyURL, reservation, waitUntil}, nil
 }
 
-func (b *rateBucket) availableAt(now time.Time, limit modelRateLimit, estimate int) time.Time {
-	until := b.nextRequest
+func (b *rateBucket) tokenAvailableAt(now time.Time, limit modelRateLimit, estimate int) time.Time {
+	var until time.Time
 	active := b.tokens[:0]
 	total := 0
 	for _, r := range b.tokens {
@@ -174,6 +190,31 @@ func (b *rateBucket) availableAt(now time.Time, limit modelRateLimit, estimate i
 		until = retry
 	}
 	return until
+}
+
+func (b *rateBucket) reserveRPS(now time.Time, limit modelRateLimit) (time.Time, float64, time.Time) {
+	if limit.RPS <= 0 {
+		return now, b.rpsTokens, b.rpsUpdatedAt
+	}
+	capacity := math.Max(1, math.Floor(limit.RPS))
+	tokens, updatedAt := b.rpsTokens, b.rpsUpdatedAt
+	if updatedAt.IsZero() {
+		tokens, updatedAt = capacity, now
+	} else if now.After(updatedAt) {
+		tokens = math.Min(capacity, tokens+now.Sub(updatedAt).Seconds()*limit.RPS)
+		updatedAt = now
+	}
+	if tokens >= 1 {
+		return now, tokens - 1, updatedAt
+	}
+	base := updatedAt
+	if base.Before(now) {
+		base = now
+	}
+	wait := time.Duration(math.Ceil((1 - tokens) / limit.RPS * float64(time.Second)))
+	sendAt := base.Add(wait)
+	// Reserve a future token slot. Concurrent arrivals are scheduled after it.
+	return sendAt, 0, sendAt
 }
 
 // No tokenizer is available on CPA's completion route. Reserve an approximate

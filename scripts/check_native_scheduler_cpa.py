@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from check_plugin import check_plugin
 
@@ -32,6 +33,7 @@ def run(args):
     data.mkdir(parents=True)
     shutil.copy2(library, plugins / "mistral-bridge.so")
     captures = []
+    arrival_times = []
     capture_lock = threading.Lock()
 
     class Upstream(BaseHTTPRequestHandler):
@@ -45,6 +47,7 @@ def run(args):
             model = body["model"]
             with capture_lock:
                 captures.append((model, credential))
+                arrival_times.append(time.monotonic())
                 attempt = captures.count((model, credential))
             limited = (model.startswith("limit-") and attempt == 1) or (model == "shared-upstream" and credential != "Bearer mock-other")
             if limited:
@@ -88,7 +91,7 @@ def run(args):
     }
     config_path = root / "config.yaml"
     config_path.write_text(json.dumps(config), encoding="utf-8")
-    models = {"plain":"plain-upstream", "normal":"limit-normal", "stream":"limit-stream", "transient":"limit-transient", "disable":"limit-disable", "rps":"glm-5-2", "tpm":"mistral-small-2603", "stream-tpm":"mistral-large-2512", "shared":"shared-upstream"}
+    models = {"plain":"plain-upstream", "normal":"limit-normal", "stream":"limit-stream", "transient":"limit-transient", "disable":"limit-disable", "rps":"glm-5-2", "burst":"deepseek-v4-1-flash-1017", "tpm":"mistral-small-2603", "stream-tpm":"mistral-large-2512", "shared":"shared-upstream"}
     state = {
         "keys": [{"id": name, "label": name, "secret": "mock-" + name, "base_url": f"http://127.0.0.1:{mock.server_port}/v1", "enabled": True, "priority": priority}
                  for name, priority in [("one", 0), ("two", 0)]],
@@ -205,10 +208,24 @@ def run(args):
         api("/v0/management/auth-files?name=" + names["one"], doc, "POST")
 
         chat("rps")
-        chat("rps", 429, reaches=False)
-        time.sleep(2.2)
+        queued_at = time.monotonic()
         chat("rps")
-        passed("local RPS admission reports a structured per-model cooldown to CPA")
+        assert time.monotonic() - queued_at >= 1.9
+        passed("0.5 RPS bursts queue for two seconds instead of returning a false 429")
+
+        before = len(captures)
+        time_before = len(arrival_times)
+        def concurrent_burst(_):
+            status, response, _ = http("/v1/chat/completions", {"model":"burst", "messages":[{"role":"user","content":"mock"}], "max_tokens":16})
+            return status, response
+        with ThreadPoolExecutor(max_workers=12) as workers:
+            outcomes = list(workers.map(concurrent_burst, range(12)))
+        assert all(status == 200 for status, _ in outcomes), outcomes
+        burst_times = arrival_times[time_before:]
+        assert len(captures) == before + 12 and len(burst_times) == 12
+        burst_span = max(burst_times)-min(burst_times)
+        assert burst_span < .5, burst_span
+        passed("12-request concurrent burst consumes idle RPS capacity without paced latency")
         for model, streaming in [("tpm", False), ("stream-tpm", True)]:
             chat(model, stream=streaming)
             time.sleep(2.1)

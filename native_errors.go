@@ -1,12 +1,30 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
 	"time"
 )
+
+func waitForScheduledSlot(ctx context.Context, until time.Time) error {
+	if until.IsZero() || !until.After(time.Now()) {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timer := time.NewTimer(time.Until(until))
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return &statusError{499, "客户端已取消排队请求"}
+	}
+}
 
 type providerError struct {
 	*statusError

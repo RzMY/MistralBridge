@@ -77,6 +77,10 @@ func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *reque
 	}
 	body, headers, endpoint := prepared.body, prepared.headers, prepared.endpoint
 	defer prepared.reservation.finish(nil)
+	if err := waitForScheduledSlot(ctx, prepared.waitUntil); err != nil {
+		prepared.reservation.finish(map[string]int{"total_tokens": 0})
+		return nil, nil, err
+	}
 	callbackReq := upstreamRequest{Method: http.MethodPost, URL: endpoint, Headers: headers, Body: body, HostCallbackID: req.HostCallbackID}
 	trace.captureRequest(callbackReq.Method, callbackReq.URL, callbackReq.Headers, callbackReq.Body)
 	responseRaw, err := doUpstreamHTTP(ctx, callbackReq, prepared.proxyURL)
@@ -120,6 +124,10 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 			prepared.reservation.finish(nil)
 		}
 	}()
+	if err := waitForScheduledSlot(ctx, prepared.waitUntil); err != nil {
+		prepared.reservation.finish(map[string]int{"total_tokens": 0})
+		return nil, err
+	}
 	trace.captureRequest(http.MethodPost, endpoint, headers, body)
 	stream, err := openUpstreamHTTPStream(ctx, upstreamRequest{
 		Method: http.MethodPost, URL: endpoint, Headers: headers,

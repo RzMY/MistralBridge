@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,8 +61,12 @@ func TestRateSharedAliasesAndModelIsolation(t *testing.T) {
 	}
 	first.reservation.finish(nil)
 	state.Models = append(state.Models, modelMapping{ClientModel: "other", UpstreamModel: "glm-5-2", Enabled: true})
-	_, err = reserveTest(s, state, "other", 10)
-	requireLimited(t, err)
+	other, err := reserveTest(s, state, "other", 10)
+	if err != nil || other.waitUntil.Sub(*now) != 2*time.Second {
+		t.Fatalf("RPS burst should queue at the next slot: %+v %v", other, err)
+	}
+	other.reservation.finish(nil)
+	*now = now.Add(2 * time.Second)
 	state.Models[1].UpstreamModel = "mistral-large-2512"
 	r, err := reserveTest(s, state, "other", 10)
 	if err != nil {
@@ -75,9 +81,11 @@ func TestRateSharedAliasesAndModelIsolation(t *testing.T) {
 	r.reservation.finish(nil)
 }
 
-func TestRateReservationsAreAtomic(t *testing.T) {
+func TestRateReservationsAreAtomicallyPaced(t *testing.T) {
 	s, _ := rateTestState(t, "glm-5-2")
 	var admitted atomic.Int32
+	var slotsMu sync.Mutex
+	var slots []time.Time
 	var wg sync.WaitGroup
 	for i := 0; i < 64; i++ {
 		wg.Add(1)
@@ -86,14 +94,114 @@ func TestRateReservationsAreAtomic(t *testing.T) {
 			r, err := reserveTest(s, state, "alias", 10)
 			if err == nil {
 				admitted.Add(1)
+				slotsMu.Lock()
+				slots = append(slots, r.waitUntil)
+				slotsMu.Unlock()
 				r.reservation.finish(nil)
 			}
 		}()
 	}
 	wg.Wait()
-	if admitted.Load() != 1 {
-		t.Fatalf("concurrent requests admitted: %d", admitted.Load())
+	if admitted.Load() != 16 {
+		t.Fatalf("RPS burst should queue all slots inside 30s and reject only backlog, admitted %d", admitted.Load())
 	}
+	slotsMu.Lock()
+	defer slotsMu.Unlock()
+	if len(slots) != 16 {
+		t.Fatalf("reserved slots: %d", len(slots))
+	}
+	for i := range slots {
+		if slots[i].IsZero() {
+			slots[i] = s.now()
+		}
+	}
+	sort.Slice(slots, func(i, j int) bool { return slots[i].Before(slots[j]) })
+	for i, slot := range slots {
+		if slot.Sub(s.now()) != time.Duration(i)*2*time.Second {
+			t.Fatalf("slot %d at %v", i, slot.Sub(s.now()))
+		}
+	}
+}
+
+func TestSubSecondRPSBurstsQueueInsteadOf429(t *testing.T) {
+	s, now := rateTestState(t, "deepseek-v4-1-flash-1017")
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var prepared []scheduledCompletion
+	var rejected atomic.Int32
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := reserveTest(s, state, "alias", 10)
+			if err != nil {
+				rejected.Add(1)
+				return
+			}
+			mu.Lock()
+			prepared = append(prepared, r)
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if rejected.Load() != 0 || len(prepared) != 20 {
+		t.Fatalf("low-volume burst rejected %d of 20 requests", rejected.Load())
+	}
+	var offsets []time.Duration
+	for _, r := range prepared {
+		if !r.waitUntil.IsZero() {
+			offsets = append(offsets, r.waitUntil.Sub(*now))
+		}
+		r.reservation.finish(nil)
+	}
+	sort.Slice(offsets, func(i, j int) bool { return offsets[i] < offsets[j] })
+	for i, offset := range offsets {
+		if offset != time.Duration(i+1)*time.Duration(math.Ceil(float64(time.Second)/builtinRateLimits["deepseek-v4-1-flash-1017"].RPS)) {
+			t.Fatalf("burst slot %d = %v", i, offset)
+		}
+	}
+}
+
+func TestHighRPSAllowsAccumulatedBurstImmediately(t *testing.T) {
+	s, _ := rateTestState(t, "deepseek-v4-1-flash-1017")
+	var admitted atomic.Int32
+	var queued atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := reserveTest(s, state, "alias", 10)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			admitted.Add(1)
+			if !r.waitUntil.IsZero() {
+				queued.Add(1)
+			}
+			r.reservation.finish(nil)
+		}()
+	}
+	wg.Wait()
+	if admitted.Load() != 12 || queued.Load() != 0 {
+		t.Fatalf("idle token bucket delayed a small burst: admitted=%d queued=%d", admitted.Load(), queued.Load())
+	}
+}
+
+func TestIdleRPSBucketRefillsBeforeNextRequest(t *testing.T) {
+	s, now := rateTestState(t, "glm-5-2")
+	first, err := reserveTest(s, state, "alias", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.reservation.finish(nil)
+	*now = now.Add(5 * time.Second)
+	second, err := reserveTest(s, state, "alias", 10)
+	if err != nil || !second.waitUntil.IsZero() {
+		t.Fatalf("idle capacity not restored immediately: %+v %v", second, err)
+	}
+	second.reservation.finish(nil)
 }
 
 func TestTPMReservationUsageAndLongStream(t *testing.T) {
