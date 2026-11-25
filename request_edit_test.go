@@ -237,7 +237,7 @@ func TestRequestEditAppliesToBothExecutorsAndKeepsRoutingAndCredentials(t *testi
 				return json.RawMessage(`{"StatusCode":503,"Body":""}`), nil
 			}
 			raw, _ := json.Marshal(rpcExecutorRequest{Model: "client", Payload: []byte(`{"model":"client","messages":[{"role":"developer","content":"test"}],"max_completion_tokens":128,"seed":42,"stream_options":{"include_usage":true}}`), Headers: http.Header{"x-client-tag": {"test"}, "Authorization": {"Bearer client-secret"}, "X-Unmapped": {"ignore"}, "Cookie": {"private"}}})
-			_, err := handleMethod(method, raw)
+			_, err := handleMethod(method, testNativeRaw(raw))
 			var status *statusError
 			if !called || !errors.As(err, &status) || status.Status != 503 {
 				t.Fatalf("edited request did not reach upstream: %v", err)

@@ -46,8 +46,8 @@ func TestChannelAppliesToBothCompletionPaths(t *testing.T) {
 				req := rpcExecutorRequest{Model: "alias", Payload: []byte(`{"messages":[],"metadata":{"call_source":"client_override","user_id":"preserved"}}`)}
 				trace := newRequestTrace(req)
 				if stream {
-					_, _ = performCompletionStream(context.Background(), req, trace)
-				} else if _, _, err := performCompletion(context.Background(), req, trace); err != nil {
+					_, _ = performCompletionStream(context.Background(), testNativeRequest(req), trace)
+				} else if _, _, err := performCompletion(context.Background(), testNativeRequest(req), trace); err != nil {
 					t.Fatal(err)
 				}
 				if !called {

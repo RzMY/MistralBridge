@@ -16,6 +16,9 @@ func isolatedState(t *testing.T) {
 	t.Helper()
 	t.Setenv("MISTRAL_BRIDGE_DATA_DIR", t.TempDir())
 	state = pluginState{Keys: []apiKey{}, Models: []modelMapping{}, Catalog: []string{}, Logs: []RequestLog{}}
+	nativeAuthEnabled.Store(false)
+	nativeAuthRoot.Store("")
+	nativeMetadata.Clear()
 	completionLimits = newCompletionScheduler()
 	stateLoaded = true
 	publishedRevision = ""
@@ -85,7 +88,7 @@ func TestMappingRegistrationRenameAndCatalogSync(t *testing.T) {
 	}
 	for _, model := range []string{"short", "mistral-bridge/short"} {
 		route, _ := routeModel([]byte(`{"RequestedModel":"` + model + `"}`))
-		if !strings.Contains(string(route), `"Handled":true`) {
+		if !strings.Contains(string(route), `"Handled":false`) {
 			t.Fatal(string(route))
 		}
 	}
@@ -113,40 +116,6 @@ func TestMappingRegistrationRenameAndCatalogSync(t *testing.T) {
 	raw, _ = staticModels(nil)
 	if response.StatusCode != 200 || strings.Contains(string(raw), "renamed") {
 		t.Fatal("deleted mapping remains registered")
-	}
-}
-
-func TestPrioritySelectionAndExplicitBinding(t *testing.T) {
-	isolatedState(t)
-	selectKey := func(settings pluginState) (apiKey, bool) {
-		req := rpcExecutorRequest{Model: "alias", Payload: []byte(`{"messages":[]}`)}
-		selected, err := completionLimits.prepare(settings, req, newRequestTrace(req))
-		if err != nil {
-			return apiKey{}, false
-		}
-		selected.reservation.finish(nil)
-		return selected.key, true
-	}
-	settings := pluginState{Models: []modelMapping{{ClientModel: "alias", Enabled: true}}, Keys: []apiKey{{ID: "low", Priority: 0, Enabled: true}, {ID: "high1", Priority: 5, Enabled: true}, {ID: "disabled", Priority: 10}, {ID: "high2", Priority: 5, Enabled: true}}}
-	used := map[string]bool{}
-	for i := 0; i < 8; i++ {
-		key, ok := selectKey(settings)
-		if !ok || key.Priority != 5 {
-			t.Fatalf("key = %+v", key)
-		}
-		used[key.ID] = true
-	}
-	if len(used) != 2 {
-		t.Fatal("same-priority keys did not rotate")
-	}
-	settings.Models[0].KeyID = "low"
-	key, ok := selectKey(settings)
-	if !ok || key.ID != "low" {
-		t.Fatal("explicit binding ignored")
-	}
-	settings.Models[0].KeyID = "disabled"
-	if _, ok := selectKey(settings); ok {
-		t.Fatal("disabled bound key selected")
 	}
 }
 
@@ -284,7 +253,7 @@ func TestCompletionLogsResolvedFieldsAndErrors(t *testing.T) {
 		return json.Marshal(upstreamResponse{StatusCode: 200, Body: []byte(`{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}`)})
 	}
 	req, _ := json.Marshal(rpcExecutorRequest{Model: "alias", Payload: []byte(`{"messages":[],"reasoning_effort":"high"}`)})
-	if _, err := execute(req); err != nil {
+	if _, err := execute(testNativeRaw(req)); err != nil {
 		t.Fatal(err)
 	}
 	row := state.Logs[0]
@@ -292,7 +261,7 @@ func TestCompletionLogsResolvedFieldsAndErrors(t *testing.T) {
 		t.Fatalf("log = %+v", row)
 	}
 	hostCall = func(string, any) (json.RawMessage, error) { return nil, errors.New("network failure") }
-	if _, err := execute(req); err == nil {
+	if _, err := execute(testNativeRaw(req)); err == nil {
 		t.Fatal("expected failure")
 	}
 	if len(state.Logs) != 2 || state.Logs[1].Status != "error" || state.Logs[1].KeyLabel != "primary" {

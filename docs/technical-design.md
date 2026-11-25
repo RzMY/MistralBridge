@@ -37,7 +37,7 @@ flowchart LR
 | 能力 | 用途 |
 | --- | --- |
 | `model_provider` | 从已启用映射生成 CPA 模型列表 |
-| `model_router` | 判断请求模型是否由本插件处理 |
+| `auth_provider` | 解析 CPA 原生凭证文件；执行器使用宿主选定的凭证 |
 | `executor` | 执行非流式和流式 Chat Completions |
 | `thinking_applier` | 将 CPA 思考级别写入请求字段 |
 | `management_api` | 注册控制台页面与管理路由 |
@@ -47,7 +47,7 @@ flowchart LR
 
 ## 模型与凭证解析
 
-模型映射包含请求模型名、上游模型名、可选思考映射、可选凭证绑定和启用状态。只有已启用映射会由 `model.static` 发布给 CPA。客户端可使用不带插件前缀的请求模型名，也可使用 `mistral-bridge/` 前缀。路由和执行时都会移除此前缀再匹配 `client_model`。
+模型映射包含请求模型名、上游模型名、可选思考映射、可选凭证绑定和启用状态。`model.static` 提供目录并同步凭证，`model.for_auth` 按启用状态和绑定关系发布每个凭证的可用模型。客户端使用模型别名；如需前缀，在 CPA 原生凭证中配置 `prefix`，由 CPA 解析。插件不再强制接管带 `mistral-bridge/` 的请求。
 
 每个已发布模型声明 128,000 的上下文长度、8,192 的最大输出 Token，并声明 `temperature`、`top_p`、`max_tokens`、`reasoning_effort`、`tools`、`tool_choice` 和 `stream` 参数。
 
@@ -55,7 +55,7 @@ flowchart LR
 
 1. 映射包含 `key_id` 时，只考虑绑定且已启用的凭证。
 2. 映射未绑定凭证时，考虑全部已启用凭证。
-3. 只选择最高优先级的一组，同优先级凭证通过原子计数轮询。
+3. 通过 `auth_provider` 注册每个 Key；`model.for_auth` 按绑定发布模型，由 CPA 完成凭证选择，执行器严格使用所选 AuthID。
 
 映射不存在、被禁用或没有可用凭证时，请求不会发给 Mistral。凭证优先级范围为 `-1000` 到 `1000`。
 
@@ -101,7 +101,7 @@ flowchart LR
 
 ## 模型限额调度
 
-`rate_limits.go` 统一执行优先级选择、同级轮询、RPS 间隔、TPM 预留与 429 冷却。普通请求在响应后结算，流式请求由 relay 在完成或中断时结算。具体限额、估算边界和集成测试见 [模型限额与冷却](rate-limits.md)。
+`native_auth.go` 注册原生凭证并同步其生命周期；CPA 执行优先级、权重、重试和上游错误冷却。`rate_limits.go` 只检查所选凭证的 RPS 间隔和 TPM 预留，拒绝时返回结构化临时冷却提示。普通请求在响应后结算，流式请求由 relay 在完成或中断时结算。具体限额、估算边界和集成测试见 [模型限额与冷却](rate-limits.md)。
 
 ## 凭证与额度
 

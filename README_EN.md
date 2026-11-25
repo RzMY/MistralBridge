@@ -93,7 +93,7 @@ Send a request to CPA's `/v1/chat/completions` with `model` set to `mistral-smal
 }
 ```
 
-Request model names are used directly in CPA's model list and API calls. With automatic credential selection, the highest-priority enabled keys are selected in round-robin order. An explicit credential binding uses that credential.
+Request model names are used directly in CPA's model list and API calls. CPA selects among native credentials using its configured priority, weights and cooldown policy. Explicitly bound models are published only for that credential.
 
 A reasoning-effort mapping can use `high=medium, low=none`. Leaving it empty forwards the requested effort. Supported values depend on the upstream model.
 
@@ -120,7 +120,9 @@ State is stored at `<auth-dir>/plugin-data/mistral-bridge/state.json`, with requ
 
 The proxy URL is stored in the same `state.json` as `proxy_url` and applies to new requests after saving. Click **沿用 CPA 配置** (Use CPA configuration), or clear the URL and save, to restore CPA's HTTP callbacks. Independent proxy mode retains the plugin's request logs and debug details, while upstream requests bypass CPA's `host.http` callbacks.
 
-The plugin embeds TPM/RPS limits for 23 models from the downloaded account snapshot. Scheduling skips cooling credentials, and upstream 429 responses trigger cooldown for both normal and streaming requests. See [rate limits and testing](docs/rate-limits.md).
+Each key is automatically registered as a native CPA credential. CPA owns credential selection, weights, priority, retries and upstream cooldown; the plugin uses only the selected auth. Same-name models can participate alongside other providers. See [native integration](docs/native-cpa.md).
+
+The plugin embeds TPM/RPS limits for 23 models from the downloaded account snapshot. Admission limits and upstream 429 responses feed CPA native cooldown and failover for both normal and streaming requests. See [rate limits and testing](docs/rate-limits.md).
 
 ## Build from source
 

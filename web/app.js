@@ -149,7 +149,7 @@
     renderKeys(); renderModels();
     $("catalogOptions").innerHTML = snapshot.catalog.map(model => `<option value="${escapeHTML(model)}"></option>`).join("");
     const keyValue = $("mappingKey").value;
-    $("mappingKey").innerHTML = '<option value="">按优先级自动选择</option>' + snapshot.keys.map(key => `<option value="${escapeHTML(key.id)}">${escapeHTML(key.label)} · ${escapeHTML(key.masked)}</option>`).join("");
+    $("mappingKey").innerHTML = '<option value="">由 CPA 自动调度</option>' + snapshot.keys.map(key => `<option value="${escapeHTML(key.id)}">${escapeHTML(key.label)} · ${escapeHTML(key.masked)}</option>`).join("");
     $("mappingKey").value = keyValue;
     $("publishNotice").classList.toggle("hidden", snapshot.models_revision === snapshot.published_revision);
   }

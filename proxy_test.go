@@ -96,7 +96,7 @@ func TestIndependentHTTPProxyForCompletionAndCatalog(t *testing.T) {
 		return nil, fmt.Errorf("independent proxy unexpectedly used host callback %s", method)
 	}
 	raw, _ := json.Marshal(rpcExecutorRequest{Model: "alias", Payload: []byte(`{"messages":[]}`)})
-	if response, err := execute(raw); err != nil || !strings.Contains(string(response), "ok") {
+	if response, err := execute(testNativeRaw(raw)); err != nil || !strings.Contains(string(response), "ok") {
 		t.Fatalf("completion failed: %s, %v", response, err)
 	}
 	if response := managementCall(t, "POST", "/keys/test", `{"id":"key"}`); response.StatusCode != http.StatusOK {
@@ -204,7 +204,7 @@ func TestIndependentProxyStreamsAndErrorBodies(t *testing.T) {
 		return json.Marshal(map[string]bool{"ok": true})
 	}
 	raw, _ := json.Marshal(rpcExecutorRequest{Model: "alias", StreamID: "client", HostCallbackID: "callback", Payload: []byte(`{"messages":[]}`)})
-	_, err := executeStream(raw)
+	_, err := executeStream(testNativeRaw(raw))
 	if err != nil {
 		close(continueStream)
 		t.Fatal(err)
@@ -249,7 +249,7 @@ func TestIndependentProxyStreamsAndErrorBodies(t *testing.T) {
 	stateMu.Lock()
 	state.ProxyURL = failedProxy.URL
 	stateMu.Unlock()
-	_, err = executeStream(raw)
+	_, err = executeStream(testNativeRaw(raw))
 	var status *statusError
 	if !errors.As(err, &status) || status.Status != 422 || status.Message != "unsupported reasoning_effort" {
 		t.Fatalf("proxy stream lost upstream error: %v", err)

@@ -152,12 +152,18 @@ func handleMethod(method string, raw []byte) ([]byte, error) {
 	switch method {
 	case "plugin.register", "plugin.reconfigure":
 		return registration()
-	case "executor.identifier":
+	case "executor.identifier", "auth.identifier":
 		return okEnvelope(map[string]string{"identifier": pluginID})
 	case "model.static":
 		return staticModels(raw)
 	case "model.for_auth":
-		return staticModels(nil)
+		return nativeModels(raw)
+	case "auth.parse":
+		return parseNativeAuth(raw)
+	case "auth.refresh":
+		return refreshNativeAuth(raw)
+	case "auth.login.start", "auth.login.poll":
+		return nil, &statusError{400, "Add a Mistral API key in the plugin console or import a CPA credential file"}
 	case "model.route":
 		return routeModel(raw)
 	case "executor.execute":
@@ -194,9 +200,9 @@ func registration() ([]byte, error) {
 		},
 		"capabilities": map[string]any{
 			"model_provider":          true,
-			"model_router":            true,
+			"auth_provider":           true,
 			"executor":                true,
-			"executor_model_scope":    "static",
+			"executor_model_scope":    "oauth",
 			"executor_input_formats":  []string{"chat-completions"},
 			"executor_output_formats": []string{"chat-completions"},
 			"management_api":          true,
@@ -216,6 +222,13 @@ func staticModels(raw []byte) ([]byte, error) {
 		configureDataDirectory(request.Host.AuthDir)
 	}
 	loadState()
+	if request.Host.AuthDir != "" {
+		nativeAuthRoot.Store(request.Host.AuthDir)
+		nativeAuthEnabled.Store(true)
+		if err := syncNativeAuths(nil, true); err != nil {
+			return nil, err
+		}
+	}
 	stateMu.Lock()
 	models := make([]map[string]any, 0, len(state.Models))
 	for _, model := range state.Models {
@@ -244,24 +257,9 @@ func modelInfo(model modelMapping) map[string]any {
 	}
 }
 
+// Normal model/provider resolution must remain available to every provider.
 func routeModel(raw []byte) ([]byte, error) {
-	var req struct {
-		RequestedModel string `json:"RequestedModel"`
-	}
-	if err := json.Unmarshal(raw, &req); err != nil {
-		return nil, err
-	}
-	modelID := strings.TrimPrefix(req.RequestedModel, pluginID+"/")
-	if modelID == "" {
-		return okEnvelope(map[string]any{"Handled": false})
-	}
-	state := currentState()
-	for _, model := range state.Models {
-		if model.Enabled && model.ClientModel == modelID {
-			return okEnvelope(map[string]any{"Handled": true, "TargetKind": "self", "Reason": "mistral_bridge_model"})
-		}
-	}
-	return okEnvelope(map[string]any{"Handled": false})
+	return okEnvelope(map[string]bool{"Handled": false})
 }
 
 func execute(raw []byte) ([]byte, error) {
@@ -342,7 +340,7 @@ func managementRoutes() []map[string]string {
 	return routes
 }
 
-func handleManagement(raw []byte) ([]byte, error) {
+func routeManagement(raw []byte) ([]byte, error) {
 	var req managementRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, err
@@ -602,7 +600,7 @@ func toggleKey(id string, enabled *bool) ([]byte, error) {
 	err := mutateState(func(s *pluginState) error {
 		for i := range s.Keys {
 			if s.Keys[i].ID == id {
-				s.Keys[i].Enabled = !s.Keys[i].Enabled
+				s.Keys[i].Enabled = !nativeEnabled(s.Keys[i])
 				if enabled != nil {
 					s.Keys[i].Enabled = *enabled
 				}
@@ -856,7 +854,7 @@ func publicKey(key apiKey) safeKey {
 	if channel == "" {
 		channel = "auto"
 	}
-	return safeKey{ID: key.ID, Label: key.Label, Masked: "••••" + last, BaseURL: key.BaseURL, Enabled: key.Enabled, Priority: key.Priority, Channel: channel, Source: keySource(key), ActiveChannel: activeChannel(key), Quotas: key.Quotas, Quota: selectedQuota(key), CreatedAt: key.CreatedAt}
+	return safeKey{ID: key.ID, Label: key.Label, Masked: "••••" + last, BaseURL: key.BaseURL, Enabled: nativeEnabled(key), Priority: nativePriority(key), Channel: channel, Source: keySource(key), ActiveChannel: activeChannel(key), Quotas: key.Quotas, Quota: selectedQuota(key), CreatedAt: key.CreatedAt}
 }
 
 func managementJSON(value any) ([]byte, error) {
@@ -1102,4 +1100,38 @@ func configureDataDirectory(authDir string) {
 		dataDir = authDir
 	}
 	dataMu.Unlock()
+}
+
+func handleManagement(raw []byte) ([]byte, error) {
+	var req managementRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	mutation := req.Method != http.MethodGet && (strings.Contains(req.Path, "/keys") || strings.Contains(req.Path, "/models")) && !strings.HasSuffix(req.Path, "/quota") && !strings.HasSuffix(req.Path, "/test")
+	if mutation {
+		nativeEditMu.Lock()
+		defer nativeEditMu.Unlock()
+	}
+	// GET discovers native edits and repairs missing reference files.
+	if strings.HasSuffix(req.Path, "/state") && req.Method == http.MethodGet {
+		if err := syncNativeAuths(nil, false); err != nil {
+			return nativeManagementError(err)
+		}
+	}
+	before := currentState()
+	if mutation {
+		nativeEditBaseline(&before, req.Body, strings.HasSuffix(req.Path, "/keys/toggle"))
+	}
+	response, err := routeManagement(raw)
+	if err != nil || req.Method == http.MethodGet {
+		return response, err
+	}
+	var env envelope
+	var result managementResponse
+	if json.Unmarshal(response, &env) == nil && json.Unmarshal(env.Result, &result) == nil && result.StatusCode < 300 && mutation {
+		if err := syncNativeAuths(&before, false); err != nil {
+			return nativeManagementError(err)
+		}
+	}
+	return response, err
 }

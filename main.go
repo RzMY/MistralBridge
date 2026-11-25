@@ -43,9 +43,10 @@ type envelope struct {
 }
 
 type rpcError struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	HTTPStatus int    `json:"http_status,omitempty"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	HTTPStatus        int    `json:"http_status,omitempty"`
 }
 
 func main() {}
@@ -79,11 +80,7 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 	}
 	raw, err := handleMethod(C.GoString(method), requestBytes)
 	if err != nil {
-		status := 500
-		if e, ok := err.(*statusError); ok {
-			status = e.Status
-		}
-		writeResponse(response, errorEnvelope("mistral_bridge_error", err.Error(), status))
+		writeResponse(response, executorErrorEnvelope(err))
 		return 1
 	}
 	writeResponse(response, raw)

@@ -189,7 +189,7 @@ func TestAutoDropPreviewAndBothExecutorLogsWithoutDebug(t *testing.T) {
 				return json.Marshal(upstreamResponse{StatusCode: 200, Body: []byte(`{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)})
 			}
 			raw, _ := json.Marshal(rpcExecutorRequest{Model: "client", Payload: []byte(`{"messages":[{"role":"user","content":"test","message_extension":false}],"client_extension":"desktop"}`)})
-			_, err := handleMethod(method, raw)
+			_, err := handleMethod(method, testNativeRaw(raw))
 			if method == "executor.execute" && err != nil {
 				t.Fatal(err)
 			}

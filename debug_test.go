@@ -36,7 +36,7 @@ func TestDebugModeCapturesFullCompletionAndRedactsCredential(t *testing.T) {
 		return json.Marshal(upstreamResponse{StatusCode: http.StatusOK, Headers: http.Header{"Content-Type": []string{"application/json"}}, Body: []byte(body)})
 	}
 	raw, _ := json.Marshal(rpcExecutorRequest{Model: "alias", Payload: []byte(`{"messages":[{"role":"user","content":"question"}]}`)})
-	if _, err := execute(raw); err != nil {
+	if _, err := execute(testNativeRaw(raw)); err != nil {
 		t.Fatal(err)
 	}
 	entry := state.Logs[0]
@@ -84,7 +84,7 @@ func TestDebugModeCapturesFullCompletionAndRedactsCredential(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatal(string(response.Body))
 	}
-	if _, err := execute(raw); err != nil {
+	if _, err := execute(testNativeRaw(raw)); err != nil {
 		t.Fatal(err)
 	}
 	if !state.Logs[0].DebugAvailable || state.Logs[1].DebugAvailable {
@@ -114,7 +114,7 @@ func TestDebugModeCapturesStreamingErrorResponse(t *testing.T) {
 		}
 	}
 	raw, _ := json.Marshal(rpcExecutorRequest{Model: "alias", Stream: true, HostCallbackID: "callback", Payload: []byte(`{"messages":[{"role":"user","content":"question"}],"reasoning_effort":"high"}`)})
-	if _, err := executeStream(raw); err == nil || !strings.Contains(err.Error(), "unsupported reasoning_effort") {
+	if _, err := executeStream(testNativeRaw(raw)); err == nil || !strings.Contains(err.Error(), "unsupported reasoning_effort") {
 		t.Fatalf("stream error = %v", err)
 	}
 	entry := state.Logs[0]
@@ -161,7 +161,7 @@ func TestDebugModeCapturesFullStreamingResponse(t *testing.T) {
 		}
 	}
 	raw, _ := json.Marshal(rpcExecutorRequest{Model: "alias", Stream: true, HostCallbackID: "callback", StreamID: "client-stream", Payload: []byte(`{"messages":[{"role":"user","content":"question"}]}`)})
-	if _, err := executeStream(raw); err != nil {
+	if _, err := executeStream(testNativeRaw(raw)); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(3 * time.Second)

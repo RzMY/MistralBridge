@@ -36,8 +36,6 @@ var builtinRateLimits = func() map[string]modelRateLimit {
 
 type rateBucket struct {
 	nextRequest time.Time
-	cooldown    time.Time
-	failures    int
 	tokens      []*tokenReservation
 }
 
@@ -53,7 +51,6 @@ type completionScheduler struct {
 	mu      sync.Mutex
 	buckets map[[32]byte]*rateBucket
 	now     func() time.Time
-	turn    uint64
 }
 
 func newCompletionScheduler() *completionScheduler {
@@ -92,79 +89,54 @@ func (s *completionScheduler) prepare(settings pluginState, req rpcExecutorReque
 	if model.ClientModel == "" {
 		return scheduledCompletion{}, &statusError{404, "Mistral model mapping was not found"}
 	}
-	keys := make([]apiKey, 0, len(settings.Keys))
-	for _, key := range settings.Keys {
-		if key.Enabled && (model.KeyID == "" || model.KeyID == key.ID) {
-			keys = append(keys, key)
-		}
+	key, err := selectedNativeKey(req)
+	if err != nil {
+		return scheduledCompletion{}, err
 	}
-	if len(keys) == 0 {
-		return scheduledCompletion{}, &statusError{404, "Mistral model mapping has no enabled credential"}
+	if model.KeyID != "" && model.KeyID != key.ID {
+		return scheduledCompletion{}, &statusError{404, "Selected CPA credential is not bound to this model"}
 	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	sort.SliceStable(keys, func(i, j int) bool { return keys[i].Priority > keys[j].Priority })
-	for first := 0; first < len(keys); {
-		last := first + 1
-		for last < len(keys) && keys[last].Priority == keys[first].Priority {
-			last++
-		}
-		group := append([]apiKey(nil), keys[first:last]...)
-		start := int(s.turn % uint64(len(group)))
-		copy(keys[first:last], append(group[start:], group[:start]...))
-		first = last
+	trace.resolved(key, model, req.Payload)
+	body, headers, drops, err := prepareCompletionRequest(req, key, model, settings.RequestEdit)
+	trace.recordDroppedFields(drops)
+	if err != nil {
+		return scheduledCompletion{}, err
 	}
-	var earliest time.Time
-	for _, key := range keys {
-		trace.resolved(key, model, req.Payload)
-		body, headers, drops, err := prepareCompletionRequest(req, key, model, settings.RequestEdit)
-		trace.recordDroppedFields(drops)
-		if err != nil {
-			return scheduledCompletion{}, err
-		}
-		endpoint, err := completionURL(key.BaseURL)
-		if err != nil {
-			return scheduledCompletion{}, &statusError{500, "Invalid Mistral API endpoint"}
-		}
-		limit := builtinRateLimits[model.UpstreamModel]
-		estimate := estimateRequestTokens(body)
-		if limit.TPM > 0 {
-			estimate = min(estimate, limit.TPM)
-		}
-		scope := rateScope(key, model.UpstreamModel)
-		bucket := s.buckets[scope]
-		if bucket == nil {
-			bucket = &rateBucket{}
-			s.buckets[scope] = bucket
-		}
-		until := bucket.availableAt(now, limit, estimate)
-		if until.After(now) {
-			if earliest.IsZero() || until.Before(earliest) {
-				earliest = until
-			}
-			continue
-		}
-		s.turn++
-		reservation := &tokenReservation{scheduler: s, bucket: bucket, tokens: estimate}
-		if limit.TPM > 0 {
-			bucket.tokens = append(bucket.tokens, reservation)
-		}
-		if limit.RPS > 0 {
-			bucket.nextRequest = now.Add(time.Duration(math.Ceil(float64(time.Second) / limit.RPS)))
-		}
-		trace.resolved(key, model, body)
-		return scheduledCompletion{key, model, body, headers, endpoint, reservation}, nil
+	endpoint, err := completionURL(key.BaseURL)
+	if err != nil {
+		return scheduledCompletion{}, &statusError{500, "Invalid Mistral API endpoint"}
 	}
-	return scheduledCompletion{}, cooldownError(earliest.Sub(now))
+	limit := builtinRateLimits[model.UpstreamModel]
+	estimate := estimateRequestTokens(body)
+	if limit.TPM > 0 {
+		estimate = min(estimate, limit.TPM)
+	}
+	scope := rateScope(key, model.UpstreamModel)
+	bucket := s.buckets[scope]
+	if bucket == nil {
+		bucket = &rateBucket{}
+		s.buckets[scope] = bucket
+	}
+	until := bucket.availableAt(now, limit, estimate)
+	if until.After(now) {
+		return scheduledCompletion{}, cooldownError(until.Sub(now))
+	}
+	reservation := &tokenReservation{scheduler: s, bucket: bucket, tokens: estimate}
+	if limit.TPM > 0 {
+		bucket.tokens = append(bucket.tokens, reservation)
+	}
+	if limit.RPS > 0 {
+		bucket.nextRequest = now.Add(time.Duration(math.Ceil(float64(time.Second) / limit.RPS)))
+	}
+	trace.resolved(key, model, body)
+	return scheduledCompletion{key, model, body, headers, endpoint, reservation}, nil
 }
 
 func (b *rateBucket) availableAt(now time.Time, limit modelRateLimit, estimate int) time.Time {
-	until := b.cooldown
-	if b.nextRequest.After(until) {
-		until = b.nextRequest
-	}
+	until := b.nextRequest
 	active := b.tokens[:0]
 	total := 0
 	for _, r := range b.tokens {
@@ -238,9 +210,9 @@ func (r *tokenReservation) finish(usage map[string]int) {
 	}
 }
 
-func cooldownError(wait time.Duration) *statusError {
+func cooldownError(wait time.Duration) *providerError {
 	seconds := max(1, int(math.Ceil(wait.Seconds())))
-	return &statusError{429, fmt.Sprintf("Mistral rate limit cooldown; retry after %d seconds", seconds)}
+	return &providerError{statusError: &statusError{429, fmt.Sprintf("Mistral model rate limit; retry after %d seconds", seconds)}, Code: "transient_rate_limit", RetryAfterSeconds: seconds}
 }
 
 func retryAfter(headers http.Header, now time.Time) time.Duration {
@@ -259,24 +231,4 @@ func retryAfter(headers http.Header, now time.Time) time.Duration {
 		}
 	}
 	return 0
-}
-
-func (r *tokenReservation) throttled(headers http.Header) *statusError {
-	s := r.scheduler
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := s.now()
-	b := r.bucket
-	if now.After(b.cooldown.Add(5 * time.Minute)) {
-		b.failures = 0
-	}
-	b.failures = min(b.failures+1, 5)
-	wait := retryAfter(headers, now)
-	if wait <= 0 {
-		wait = min(time.Minute*time.Duration(1<<uint(b.failures-1)), 15*time.Minute)
-	}
-	if until := now.Add(wait); until.After(b.cooldown) {
-		b.cooldown = until
-	}
-	return cooldownError(b.cooldown.Sub(now))
 }

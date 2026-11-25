@@ -49,7 +49,7 @@ func TestDebugCapturesTrueOriginalAndExecutorBeforeEditing(t *testing.T) {
 				return json.Marshal(upstreamResponse{StatusCode: 200, Body: []byte(`{"choices":[]}`)})
 			}
 			raw, _ := json.Marshal(rpcExecutorRequest{Model: "alias", Format: "openai", SourceFormat: "openai", OriginalRequest: original, Payload: executor, Headers: incoming})
-			_, err := handleMethod(method, raw)
+			_, err := handleMethod(method, testNativeRaw(raw))
 			if method == "executor.execute" && err != nil {
 				t.Fatal(err)
 			}

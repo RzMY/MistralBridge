@@ -15,17 +15,22 @@ import (
 const defaultBaseURL = "https://api.mistral.ai/v1"
 
 type rpcExecutorRequest struct {
-	Model           string         `json:"Model"`
-	Format          string         `json:"Format"`
-	SourceFormat    string         `json:"SourceFormat"`
-	OriginalRequest []byte         `json:"OriginalRequest"`
-	Payload         []byte         `json:"Payload"`
-	Stream          bool           `json:"Stream"`
-	Headers         http.Header    `json:"Headers"`
-	Query           url.Values     `json:"Query"`
-	Metadata        map[string]any `json:"Metadata"`
-	HostCallbackID  string         `json:"host_callback_id,omitempty"`
-	StreamID        string         `json:"stream_id,omitempty"`
+	AuthID          string            `json:"AuthID"`
+	AuthProvider    string            `json:"AuthProvider"`
+	StorageJSON     []byte            `json:"StorageJSON"`
+	AuthMetadata    map[string]any    `json:"AuthMetadata"`
+	AuthAttributes  map[string]string `json:"AuthAttributes"`
+	Model           string            `json:"Model"`
+	Format          string            `json:"Format"`
+	SourceFormat    string            `json:"SourceFormat"`
+	OriginalRequest []byte            `json:"OriginalRequest"`
+	Payload         []byte            `json:"Payload"`
+	Stream          bool              `json:"Stream"`
+	Headers         http.Header       `json:"Headers"`
+	Query           url.Values        `json:"Query"`
+	Metadata        map[string]any    `json:"Metadata"`
+	HostCallbackID  string            `json:"host_callback_id,omitempty"`
+	StreamID        string            `json:"stream_id,omitempty"`
 }
 
 type upstreamRequest struct {
@@ -86,7 +91,7 @@ func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *reque
 	}
 	trace.captureResponse(response.StatusCode, response.Headers, response.Body, true)
 	if response.StatusCode == http.StatusTooManyRequests {
-		limited := prepared.reservation.throttled(response.Headers)
+		limited := nativeUpstreamError(response.StatusCode, response.Headers, response.Body)
 		prepared.reservation.finish(map[string]int{"total_tokens": 0})
 		return nil, nil, limited
 	}
@@ -94,7 +99,7 @@ func performCompletion(ctx context.Context, req rpcExecutorRequest, trace *reque
 		prepared.reservation.finish(map[string]int{"total_tokens": 0})
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return nil, nil, upstreamStatusError(response.StatusCode, response.Body)
+		return nil, nil, nativeUpstreamError(response.StatusCode, response.Headers, response.Body)
 	}
 	prepared.reservation.finish(parseUsage(response.Body))
 	result, err := normalizeCompletion(response.Body)
@@ -127,7 +132,7 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 	trace.captureResponseHead(stream.StatusCode, stream.Headers)
 	var limited error
 	if stream.StatusCode == http.StatusTooManyRequests {
-		limited = prepared.reservation.throttled(stream.Headers)
+		limited = nativeUpstreamError(stream.StatusCode, stream.Headers, stream.Body)
 	}
 	if stream.StatusCode >= 400 {
 		prepared.reservation.finish(map[string]int{"total_tokens": 0})
@@ -147,7 +152,7 @@ func performCompletionStream(ctx context.Context, req rpcExecutorRequest, trace 
 		if limited != nil {
 			return nil, limited
 		}
-		return nil, upstreamStatusError(stream.StatusCode, body)
+		return nil, nativeUpstreamError(stream.StatusCode, stream.Headers, body)
 	}
 	if !stream.opened() {
 		trace.captureResponseError(errors.New("Mistral stream was not opened"))
@@ -199,14 +204,14 @@ func relayStream(req rpcExecutorRequest, stream upstreamStreamResponse, trace *r
 		if err != nil {
 			streamErr = &statusError{502, "Mistral 流式响应中断"}
 			trace.captureResponseError(err)
-			hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "error": "Mistral stream read failed"})
+			emitNativeStreamError(req.StreamID, "Mistral stream read failed")
 			return
 		}
 		trace.captureResponseChunk(chunk.Payload)
 		if chunk.Error != "" {
 			streamErr = &statusError{502, "Mistral 流式响应中断"}
 			trace.captureResponseError(errors.New(chunk.Error))
-			hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "error": "Mistral stream failed"})
+			emitNativeStreamError(req.StreamID, "Mistral stream failed")
 			return
 		}
 		pending = append(pending, chunk.Payload...)
@@ -224,7 +229,7 @@ func relayStream(req rpcExecutorRequest, stream upstreamStreamResponse, trace *r
 			if errLine != nil {
 				streamErr = &statusError{502, "Mistral 流式响应中断"}
 				trace.captureResponseError(errLine)
-				hostCall("host.stream.emit", map[string]any{"stream_id": req.StreamID, "error": "Invalid Mistral stream event"})
+				emitNativeStreamError(req.StreamID, "Invalid Mistral stream event")
 				if trace.capturesDebug() {
 					if err := drainUpstreamStream(req, stream, trace); err != nil {
 						trace.captureResponseError(err)
