@@ -26,7 +26,7 @@ const (
 )
 
 // Release builds set this to the tag version with -ldflags -X.
-var pluginVersion = "0.4.0"
+var pluginVersion = "0.5.0"
 
 //go:embed web/index.html web/style.css web/json.js web/app.js
 var webFiles embed.FS

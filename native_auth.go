@@ -99,7 +99,9 @@ func parseNativeAuth(raw []byte) ([]byte, error) {
 	} else if strings.TrimSpace(authString(doc, "api_key")) == "" {
 		return nil, errors.New("Mistral auth requires bridge_key_id or api_key")
 	}
-	attributes := map[string]string{"api_key": "plugin-managed"}
+	// CPA exposes attributes.api_key as AccountInfo().account, which panels
+	// prefer over Label. Declare the credential kind without a fake key/account.
+	attributes := map[string]string{"auth_kind": "apikey"}
 	// Do not set base_url/compat_name: those select CPA's native compat executor.
 	for _, name := range []string{"priority", "weight"} {
 		if value, exists := doc[name]; exists {
@@ -181,6 +183,15 @@ func refreshNativeAuth(raw []byte) ([]byte, error) {
 	var req nativeAuthRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, err
+	}
+	if req.Attributes == nil {
+		req.Attributes = make(map[string]string)
+	}
+	req.Attributes["auth_kind"] = "apikey"
+	// Explicitly clear the legacy marker; CPA merges omitted attributes from
+	// the existing runtime credential when applying a refresh.
+	if req.Attributes["api_key"] == "plugin-managed" {
+		req.Attributes["api_key"] = ""
 	}
 	return okEnvelope(map[string]any{"Auth": nativeAuthData{Provider: pluginID, ID: req.AuthID, StorageJSON: req.StorageJSON, Metadata: req.Metadata, Attributes: req.Attributes}})
 }

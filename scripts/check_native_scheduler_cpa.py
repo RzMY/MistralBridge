@@ -148,6 +148,19 @@ def run(args):
             doc = json.loads((auths / name).read_text())
             assert "api_key" not in doc and "secret" not in doc
         passed("legacy keys automatically become separate CPA credentials without copying secrets")
+        def assert_display_names(expected):
+            rows = {f["name"]: f for f in api("/v0/management/auth-files")["files"] if f.get("provider") == "mistral-bridge"}
+            for key, label in expected.items():
+                row = rows[names[key]]
+                # CPAMP prefers email/account over label when displaying a credential.
+                displayed = row.get("email") or row.get("account") or row.get("label") or row.get("note") or row["name"]
+                assert displayed == label, (key, displayed, label)
+                # CPA's file watcher classifies plugin files as OAuth on reload;
+                # either path must leave the display label free of fake account data.
+                assert row.get("account", "") == "", "internal marker exposed as account"
+        assert_display_names({"one":"one", "two":"two"})
+        passed("CPA account fields do not shadow plugin credential names")
+
         for key, weight in [("one", 3), ("two", 1)]:
             api("/v0/management/auth-files/fields", {"name": names[key], "weight": weight}, "PATCH")
         start = len(captures)
@@ -157,6 +170,7 @@ def run(args):
         assert counts == {"one": 30, "two": 10}, counts
         report["weighted_counts"] = counts
         passed("CPA weighted-round-robin selects credentials in a 3:1 ratio")
+        assert_display_names({"one":"one", "two":"two"})
 
         # CPA's cooldown reset must immediately work; no private 429 timer remains.
         for model, streaming in [("normal", False), ("stream", True)]:
@@ -214,6 +228,8 @@ def run(args):
         api("/v0/management/plugins/mistral-bridge/keys", {"id":"one", "label":"Renamed", "enabled":True, "priority":0, "base_url":f"http://127.0.0.1:{mock.server_port}/v1"}, "PATCH")
         assert json.loads(path.read_text())["weight"] == 3
         passed("plugin key edits preserve CPA weight and policy metadata")
+        assert_display_names({"one":"Renamed", "two":"two"})
+        passed("plugin rename remains the CPA display name after native metadata updates")
         # Restart with persisted files: native options must survive bootstrap.
         subprocess.run(["docker", "restart", container], check=True, stdout=subprocess.DEVNULL)
         for _ in range(100):
@@ -229,6 +245,8 @@ def run(args):
         assert json.loads(path.read_text())["weight"] == 3
         chat("plain")
         passed("restart preserves native weight and restores credential-backed models")
+        assert_display_names({"one":"Renamed", "two":"two"})
+        passed("credential display names survive restart and completion")
         api("/v0/management/auth-files/status", {"name":names["one"], "disabled":True}, "PATCH")
         plugin_keys = api("/v0/management/plugins/mistral-bridge/state")["keys"]
         assert not next(k for k in plugin_keys if k["id"] == "one")["enabled"]

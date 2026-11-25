@@ -79,9 +79,41 @@ func TestNativeParsePreservesPolicyAndStandaloneKey(t *testing.T) {
 	if _, ok := result.Auth.Attributes["base_url"]; ok {
 		t.Fatal("would select native compat executor")
 	}
+	if result.Auth.Label != "Direct" || result.Auth.Attributes["auth_kind"] != "apikey" || result.Auth.Attributes["api_key"] != "" {
+		t.Fatalf("credential display name is shadowed by an account marker: %+v", result.Auth)
+	}
 	key, err := selectedNativeKey(rpcExecutorRequest{AuthID: "native.json", AuthProvider: pluginID, StorageJSON: storage})
 	if err != nil || key.Secret != "mock-direct" || key.BaseURL != doc["mistral_base_url"] {
 		t.Fatalf("standalone key %+v %v", key, err)
+	}
+}
+
+func TestNativeManagedNameAndLegacyRefresh(t *testing.T) {
+	isolatedState(t)
+	state.Keys = []apiKey{{ID: "one", Label: "Studio2", Enabled: true, Secret: "not-a-display-name"}}
+	storage := []byte(`{"type":"mistral-bridge","bridge_key_id":"one","label":"Studio2"}`)
+	raw, _ := json.Marshal(nativeAuthRequest{Provider: pluginID, FileName: nativeAuthFile("one"), RawJSON: storage})
+	reply, err := parseNativeAuth(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env envelope
+	_ = json.Unmarshal(reply, &env)
+	var result struct{ Auth nativeAuthData }
+	_ = json.Unmarshal(env.Result, &result)
+	if result.Auth.Label != "Studio2" || result.Auth.Attributes["api_key"] != "" || result.Auth.Attributes["auth_kind"] != "apikey" {
+		t.Fatalf("managed credential identity: %+v", result.Auth)
+	}
+	raw, _ = json.Marshal(nativeAuthRequest{AuthID: nativeAuthFile("one"), StorageJSON: storage, Attributes: map[string]string{"api_key": "plugin-managed", "weight": "3"}})
+	reply, err = refreshNativeAuth(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal(reply, &env)
+	_ = json.Unmarshal(env.Result, &result)
+	marker, present := result.Auth.Attributes["api_key"]
+	if !present || marker != "" || result.Auth.Attributes["weight"] != "3" || result.Auth.Attributes["auth_kind"] != "apikey" {
+		t.Fatalf("legacy marker survives refresh: %+v", result.Auth.Attributes)
 	}
 }
 

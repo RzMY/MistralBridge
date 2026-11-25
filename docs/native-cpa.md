@@ -6,6 +6,8 @@
 
 首次模型注册时，为现有每个 Key 调用 `host.auth.save`，生成 `<auth-dir>/mistral-bridge-<稳定ID摘要>.json`。文件包含 `type=mistral-bridge`、`bridge_managed=true`、`bridge_key_id`、标签、优先级和启停状态，不复制真实 API Key；真实 Key 继续位于插件 `state.json`。两个目录都需持久化。
 
+凭证类型通过 `Attributes.auth_kind=apikey` 声明，不向 `api_key` 属性写入占位值，避免 CPA 将内部标记作为 `account` 返回、覆盖面板中的凭证名称。
+
 已有原生文件中的 `weight`、`disable_cooling`、`request_retry`、`prefix`、`proxy_url` 及未知扩展字段均保留，重启不会恢复成插件默认值。插件页面显式修改优先级或启停时同步相应字段。Key 删除时先经 CPA 禁用对应凭证，再删除属于该 Key 的引用文件，由 CPA 文件监听器移除记录。直接删除 CPA 引用文件会在插件下一次同步时重建；永久移除请从插件删除 Key。
 
 模型绑定通过每凭证模型列表生效。插件不再绕过 CPA 模型解析；与其他提供商使用相同客户端模型名时，可参与共同路由及失败回退。
