@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -211,7 +212,9 @@ func (t *requestTrace) finish(usage map[string]int, err error) {
 		}
 		t.entry.Error = message
 	}
-	_ = appendRequestLog(t.entry)
+	if err := appendRequestLog(t.entry); err != nil {
+		log.Printf("mistral-bridge: %v", err)
+	}
 }
 
 type logStats struct {
@@ -256,10 +259,27 @@ func queryRequestLogs(query url.Values) ([]byte, error) {
 	if n, err := strconv.Atoi(query.Get("page_size")); err == nil && n > 0 {
 		filter.PageSize = min(n, 100)
 	}
+	retention, storageError := prepareLogRetention()
 	stateMu.RLock()
 	logs := append([]RequestLog(nil), state.Logs...)
 	stateMu.RUnlock()
-	return managementJSON(filterRequestLogs(logs, filter))
+	result := filterRequestLogs(logs, filter)
+	result["retention_limit"] = retention.MaxEntries
+	result["retention"] = retention
+	result["storage_error"] = storageError
+	if len(logs) > 0 {
+		oldest, newest := logs[0].CreatedAt, logs[0].CreatedAt
+		for _, row := range logs {
+			if row.CreatedAt.Before(oldest) {
+				oldest = row.CreatedAt
+			}
+			if row.CreatedAt.After(newest) {
+				newest = row.CreatedAt
+			}
+		}
+		result["retained_from"], result["retained_to"] = oldest, newest
+	}
+	return managementJSON(result)
 }
 
 func filterRequestLogs(logs []RequestLog, filter logFilter) map[string]any {

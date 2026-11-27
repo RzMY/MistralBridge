@@ -36,9 +36,11 @@ var consolePage = func() []byte {
 	css, _ := web.Files.ReadFile("style.css")
 	script, _ := web.Files.ReadFile("app.js")
 	jsonScript, _ := web.Files.ReadFile("json.js")
+	chartScript, _ := web.Files.ReadFile("charts.js")
 	html := strings.Replace(string(page), "/* BRIDGE_STYLES */", string(css), 1)
 	html = strings.ReplaceAll(html, "BRIDGE_LOGO_URI", pluginLogoURI)
 	html = strings.Replace(html, "/* BRIDGE_JSON_SCRIPT */", string(jsonScript), 1)
+	html = strings.Replace(html, "/* BRIDGE_CHART_SCRIPT */", string(chartScript), 1)
 	return []byte(strings.Replace(html, "/* BRIDGE_SCRIPT */", string(script), 1))
 }()
 
@@ -332,6 +334,10 @@ func managementRoutes() []map[string]string {
 		{"POST", "/plugins/mistral-bridge/keys/quota"},
 		{"PATCH", "/plugins/mistral-bridge/keys/channel"},
 		{"GET", "/plugins/mistral-bridge/logs"},
+		{"GET", "/plugins/mistral-bridge/stats"},
+		{"DELETE", "/plugins/mistral-bridge/stats"},
+		{"GET", "/plugins/mistral-bridge/telemetry/settings"},
+		{"PATCH", "/plugins/mistral-bridge/telemetry/settings"},
 		{"GET", "/plugins/mistral-bridge/logs/debug"},
 		{"PATCH", "/plugins/mistral-bridge/debug"},
 		{"DELETE", "/plugins/mistral-bridge/debug"},
@@ -397,6 +403,12 @@ func routeManagement(raw []byte) ([]byte, error) {
 		return switchKeyChannel(req.Body)
 	case method == http.MethodPost && path == "/keys/quota":
 		return refreshQuota(req.Body, req.HostCallbackID)
+	case method == http.MethodGet && path == "/stats":
+		return queryHistoricalStats(req.Query)
+	case method == http.MethodDelete && path == "/stats":
+		return resetHistoricalStats()
+	case path == "/telemetry/settings" && (method == http.MethodGet || method == http.MethodPatch):
+		return telemetrySettings(method, req.Body)
 	case method == http.MethodGet && path == "/logs":
 		return queryRequestLogs(req.Query)
 	case method == http.MethodGet && path == "/logs/debug":
@@ -880,7 +892,7 @@ func publicState() map[string]any {
 	stateMu.RLock()
 	published := publishedRevision
 	stateMu.RUnlock()
-	return map[string]any{"keys": keys, "catalog": snapshot.Catalog, "models": snapshot.Models, "debug_mode": snapshot.DebugMode, "proxy_url": snapshot.ProxyURL, "proxies": snapshot.Proxies, "request_edit": snapshot.RequestEdit, "models_revision": modelRevision(snapshot.Models), "published_revision": published}
+	return map[string]any{"capabilities": map[string]bool{"historical_stats": true, "time_series_stats": true}, "keys": keys, "catalog": snapshot.Catalog, "models": snapshot.Models, "debug_mode": snapshot.DebugMode, "proxy_url": snapshot.ProxyURL, "proxies": snapshot.Proxies, "request_edit": snapshot.RequestEdit, "models_revision": modelRevision(snapshot.Models), "published_revision": published}
 }
 
 func publicKey(key apiKey) safeKey {
@@ -927,47 +939,29 @@ func appendRequestLog(entry RequestLog) error {
 	if entry.ID == "" {
 		entry.ID = randomID()
 	}
-	line, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
 	logMu.Lock()
 	defer logMu.Unlock()
-	stateMu.Lock()
-	state.Logs = append(state.Logs, entry)
-	if excess := len(state.Logs) - maxRequestLogs; excess > 0 {
-		state.Logs = state.Logs[excess:]
-	}
-	stateMu.Unlock()
 	path, err := statePath()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
+	store, err := ensureTelemetryLocked(path)
+	if err == nil {
+		err = store.record(entry)
 	}
-	file, err := os.OpenFile(logPath(path), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
-		return err
-	}
-	if _, err := file.Write(append(line, '\n')); err != nil {
-		_ = file.Close()
-		return err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Chmod(0600); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	if info.Size() > 16*1024*1024 {
-		return compactRequestLogs(path)
+		// Keep model execution independent of telemetry availability. Preserve a
+		// bounded legacy log as a possible source for a later repair/import.
+		stateMu.Lock()
+		state.Logs = append(state.Logs, entry)
+		rows := append([]RequestLog(nil), state.Logs...)
+		stateMu.Unlock()
+		kept, raw := retainedRows(rows, defaultRetention(), time.Now())
+		_ = atomicTelemetryFile(logPath(path), raw)
+		stateMu.Lock()
+		state.Logs = kept // keep memory bounded even when the disk is unwritable
+		stateMu.Unlock()
+		return telemetryErrorLocked(path, err)
 	}
 	return nil
 }
@@ -1008,21 +1002,34 @@ func clearRequestLogs() error {
 	}
 	logMu.Lock()
 	defer logMu.Unlock()
-	stateMu.Lock()
-	state.Logs = []RequestLog{}
-	stateMu.Unlock()
 	path, err := statePath()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(logPath(path), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	store, err := ensureTelemetryLocked(path)
 	if err != nil {
 		return err
 	}
-	return file.Close()
+	// Persist intent first, so a crash cannot restore deliberately cleared rows.
+	store.data.ClearLogs = true
+	if err := store.checkpoint(); err != nil {
+		return telemetryErrorLocked(path, err)
+	}
+	if err := atomicTelemetryFile(logPath(path), nil); err != nil {
+		return telemetryErrorLocked(path, err)
+	}
+	store.data.Known = map[string]bool{}
+	store.data.ClearLogs = false
+	store.data.LegacyTail = ""
+	store.legacyBytes = 0
+	store.oldest = time.Time{}
+	stateMu.Lock()
+	state.Logs = []RequestLog{}
+	stateMu.Unlock()
+	if err := store.checkpoint(); err != nil {
+		return telemetryErrorLocked(path, err)
+	}
+	return nil
 }
 
 func readRequestLogs(stateFile string) []RequestLog {

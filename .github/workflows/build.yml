@@ -43,7 +43,8 @@ jobs:
         run: |
           node --check web/app.js
           node --check web/json.js
-          node --test scripts/test_json_viewer.cjs
+          node --check web/charts.js
+          node --test scripts/test_json_viewer.cjs scripts/test_charts.cjs
       - name: Test release tooling
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 

@@ -12,6 +12,11 @@
   let page = 1;
   let totalPages = 1;
   let logsController;
+  let usageController;
+  let retentionSettings;
+  let retentionEditing = false;
+  let retentionSaving = false;
+  let retentionLoadRevision = 0;
   let toastTimer;
   let searchTimer;
   let publishing = false;
@@ -113,7 +118,7 @@
     if (response.status === 401 || response.status === 403) {
       clearSessionKey(); managementKey = ""; showAuth();
     }
-    if (!response.ok) throw new Error(data.error || data.message || `请求失败（HTTP ${response.status}）`);
+    if (!response.ok) { const error = new Error(data.error || data.message || `请求失败（HTTP ${response.status}）`); error.status = response.status; throw error; }
     return raw ? responseText : data;
   }
   const api = (path, options, raw) => request(`${apiRoot}${path}`, options, raw);
@@ -133,7 +138,7 @@
       await loadState();
       $("authGate").classList.add("hidden"); $("app").classList.remove("hidden");
     } catch (error) { $("authError").textContent = error.message; showAuth(); return; }
-    loadLogs().catch(showError);
+    showView("usage");
   }
   async function loadState() {
     snapshot = await api("/state");
@@ -160,8 +165,9 @@
       const selected = element.dataset.view === name;
       element.setAttribute("aria-selected", String(selected)); element.tabIndex = selected ? 0 : -1;
     });
-    if (name === "requests") loadLogs().catch(showError);
+    if (name === "requests") { loadLogs().catch(showError); loadRetention().catch(showError); }
     if (name === "keys") refreshQuotas(false);
+    if (name === "usage") loadUsage().catch(showError);
   }
   function proxyAddress(value) {
  try { const url = new URL(value); if (url.username || url.password) { url.username="***";url.password=""; } return url.href.replace(/\/$/, ""); } catch { return value; }
@@ -398,16 +404,9 @@
     const data = await api(`/logs?${query}`, { signal: controller.signal });
     if (controller.signal.aborted) return;
     $("pageError").classList.add("hidden");
-    const stats = data.stats;
-    $("statRequests").textContent = number(stats.requests);
-    $("statTokens").textContent = number(stats.total_tokens);
-    $("statUsage").textContent = `输入 ${number(stats.input_tokens)} · 输出 ${number(stats.output_tokens)} · 缓存 ${stats.cache_samples ? number(stats.cached_tokens) : "—"}`;
-    $("statCache").textContent = stats.cache_rate == null ? "—" : `${stats.cache_rate.toFixed(1)}%`;
-    $("statSpeed").textContent = stats.token_rate == null ? "—" : `${stats.token_rate.toFixed(1)} t/s`;
-    $("cacheSamples").textContent = stats.requests ? `${stats.cache_samples} 条请求返回缓存用量` : "";
-    $("speedSamples").textContent = stats.requests ? `${stats.speed_samples} 条流式请求` : "";
     $("logCount").textContent = `${number(data.total)} 条`;
-    $("logRetention").textContent = `已保留 ${number(data.retained)} 条 · 最多 ${number(data.retention_limit)} 条`;
+    $("logRetention").textContent = `已保留 ${number(data.retained)} 条 · 最多 ${number(data.retention_limit)} 条${data.retained_from ? ` · ${dateText(data.retained_from)} 至 ${dateText(data.retained_to)}` : ""}`;
+    if (data.storage_error) { $("pageError").textContent = data.storage_error; $("pageError").classList.remove("hidden"); }
     page = data.page; totalPages = data.pages;
     $("pageInfo").textContent = `第 ${page} 页，共 ${totalPages} 页`;
     $("prevPage").disabled = page <= 1; $("nextPage").disabled = page >= totalPages;
@@ -425,6 +424,95 @@
       <td class="nowrap">${log.usage_known || log.input_tokens || log.output_tokens ? `${number(log.total_tokens || (log.input_tokens || 0) + (log.output_tokens || 0))}<div class="sub">输入 ${number(log.input_tokens)} · 输出 ${number(log.output_tokens)}</div><div class="sub">缓存 ${log.cached_tokens == null ? "—" : number(log.cached_tokens)}</div>` : "—"}</td>
       <td>${log.debug_available ? `<button class="btn small" type="button" data-debug-log="${escapeHTML(log.id)}">查看</button>` : "—"}</td>
     </tr>`).join("") : '<tr><td colspan="10" class="empty"><strong>没有匹配的请求</strong>调整筛选条件或稍后刷新</td></tr>';
+  }
+  function usageQuery() {
+    const query = BridgeCharts.range($("usageRange").value, new Date(), $("usageFrom").value, $("usageTo").value);
+    for (const [id, name] of [["usageModel", "model"], ["usageUpstream", "upstream_model"], ["usageKey", "key_id"], ["usageThinking", "thinking"]]) {
+      if ($(id).value) query.set(name, $(id).value);
+    }
+    return query;
+  }
+  function renderUsage(data, query) {
+    const stats = data.stats;
+    $("usageRequests").textContent = number(stats.requests);
+    $("usageTokens").textContent = number(stats.total_tokens);
+    $("usageCache").textContent = stats.cache_rate == null ? "—" : `${stats.cache_rate.toFixed(1)}%`;
+    $("usageCacheSamples").textContent = `${number(stats.cache_samples)} 条返回缓存用量`;
+    $("usageSpeed").textContent = stats.token_rate == null ? "—" : `${stats.token_rate.toFixed(1)} t/s`;
+    $("usageSpeedSamples").textContent = `${number(stats.speed_samples)} 条有效流式样本`;
+    $("usageTokens").title = `${number(stats.unknown_usage)} 条请求缺少用量 · 平均耗时 ${duration(stats.average_duration_ms)}`;
+    const reasons = { history_before_upgrade_unknown: "升级前仅导入仍存在的日志", legacy_history_may_be_missing: "旧版运行或外部日志变更期间可能存在缺口", invalid_legacy_records: "部分旧日志损坏", missing_request_time: "部分请求缺少时间", interrupted_journal_write: "检测到中断写入", storage_write_failed: "曾发生存储写入失败", unverified_legacy_records: "部分旧日志无法确认是否已累计，未自动补计" };
+    $("usageRequests").title = `统计周期始于 ${dateText(data.started_at)}；包含可恢复的旧日志。${data.incomplete ? "历史可能不完整：" + (data.incomplete_reasons || []).map(reason => reasons[reason] || reason).join("；") : "本统计周期未检测到历史缺口。"}`;
+    setOptions("usageModel", Object.keys(data.models || {}).sort().map(model => [model, model]), "全部请求模型");
+    setOptions("usageUpstream", Object.keys(data.upstream_models || {}).sort().map(model => [model, model]), "全部上游模型");
+    setOptions("usageKey", Object.entries(data.keys || {}).map(([id, label]) => [id, label || id]), "全部凭证（含历史）");
+    const series = data.series || [];
+    $("tokenChartHeading").textContent = data.granularity === "hour" ? "分时 Token" : "Token 用量";
+    $("usageTimeHeading").textContent = data.granularity === "hour" ? "时间" : "日期";
+    $("usageTimeHeading").title = data.timezone;
+    const ratio = value => value == null ? "—" : `${value.toFixed(1)}%`;
+    const speed = value => value == null ? "—" : `${value.toFixed(1)} t/s`;
+    const metrics = row => `<td>${number(row.requests)}</td><td>${number(row.total_tokens)}</td><td>${ratio(row.cache_rate)}</td><td>${speed(row.token_rate)}</td><td>${duration(row.average_first_token_ms)}</td><td>${duration(row.average_duration_ms)}</td>`;
+    const detailRows = BridgeCharts.detailRows(series, data.server_time);
+    $("usageDays").innerHTML = detailRows.map(row => `<tr><td>${escapeHTML(row.label)}</td>${metrics(row)}</tr>`).join("") || '<tr><td colspan="7" class="empty">没有匹配的历史统计</td></tr>';
+    if (data.undistributed?.requests) $("usageDays").insertAdjacentHTML("beforeend", `<tr><td>未分时历史</td>${metrics(data.undistributed)}</tr>`);
+    $("usageRequests").title += ` 时区：${data.timezone}。${data.timeline_partial ? "部分历史缺少分时数据，图表仅显示可恢复部分。" : ""}`;
+    const options = { series: true, granularity: data.granularity, timezone: data.timezone };
+    BridgeCharts.render($("requestChart"), series, { ...options, metric: "requests" });
+    BridgeCharts.render($("tokenChart"), series, { ...options, metric: "tokens" });
+  }
+  function renderRetention() {
+    $("retentionDisplay").hidden = retentionEditing;
+    $("editRetention").hidden = retentionEditing;
+    $("editRetention").disabled = !retentionSettings;
+    $("editRetention").setAttribute("aria-expanded", String(retentionEditing));
+    $("retentionEditor").hidden = !retentionEditing;
+    if (retentionSettings) {
+      $("retentionSummary").textContent = `${number(retentionSettings.max_entries)} 条 · ${number(retentionSettings.max_days)} 天 · ${number(retentionSettings.max_bytes / 1048576)} MiB`;
+    }
+    if (!retentionEditing && retentionSettings) {
+      $("retentionEntries").value = retentionSettings.max_entries;
+      $("retentionDays").value = retentionSettings.max_days;
+      $("retentionMiB").value = retentionSettings.max_bytes / 1048576;
+    }
+  }
+  async function loadRetention() {
+    const supported = Boolean(snapshot.capabilities?.historical_stats);
+    $("retentionForm").hidden = !supported;
+    if (!supported || retentionSaving) return;
+    const revision = ++retentionLoadRevision;
+    try {
+      const settings = await api("/telemetry/settings");
+      if (revision !== retentionLoadRevision) return;
+      retentionSettings = settings;
+      renderRetention();
+    } catch (error) {
+      if (revision !== retentionLoadRevision) return;
+      if (!retentionSettings) $("retentionSummary").textContent = "读取失败";
+      throw error;
+    }
+  }
+
+  async function loadUsage() {
+    usageController?.abort();
+    const controller = new AbortController(); usageController = controller;
+
+    try {
+      if (!snapshot.capabilities?.time_series_stats) throw Object.assign(new Error("旧版不支持历史统计"), { status: 404 });
+      const query = usageQuery();
+      const data = await api(`/stats?${query}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      renderUsage(data, query);
+      $("pageError").classList.add("hidden");
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      for (const id of ["usageRequests", "usageTokens", "usageCache", "usageSpeed"]) $(id).textContent = "—";
+      for (const id of ["usageCacheSamples", "usageSpeedSamples", "usageDays", "requestChart", "tokenChart"]) $(id).textContent = "";
+      $("usageRequests").removeAttribute("title");
+      $("usageTokens").removeAttribute("title");
+      error.message = error.status === 404 ? "当前插件版本不支持历史统计，请切换到请求日志页。" : `历史统计暂不可用：${error.message}`;
+      throw error;
+    }
   }
   function formatDebugBody(body) {
     if (!body) return "（空响应体）";
@@ -753,6 +841,59 @@
   for (const [id, enabled] of [["enableSelected", true], ["disableSelected", false]]) {
     $(id).addEventListener("click", event => busy(event.currentTarget, () => modelMutation("/models", jsonOptions("PATCH", { ids: [...selectedModels], enabled }))));
   }
+  $("refreshUsage").addEventListener("click", () => loadUsage().catch(showError));
+  $("applyUsageRange").addEventListener("click", () => loadUsage().catch(showError));
+  $("usageRange").addEventListener("change", () => { $("usageCustom").classList.toggle("hidden", $("usageRange").value !== "custom"); if ($("usageRange").value !== "custom") loadUsage().catch(showError); });
+  ["usageModel", "usageUpstream", "usageKey", "usageThinking"].forEach(id => $(id).addEventListener("change", () => loadUsage().catch(showError)));
+  $("editRetention").addEventListener("click", () => {
+    if (!retentionSettings) return;
+    renderRetention();
+    retentionEditing = true;
+    renderRetention();
+    $("retentionEntries").focus(); $("retentionEntries").select();
+  });
+  function cancelRetentionEdit() {
+    if (retentionSaving) return;
+    retentionEditing = false;
+    renderRetention();
+    $("editRetention").focus();
+  }
+  $("cancelRetention").addEventListener("click", cancelRetentionEdit);
+  $("retentionForm").addEventListener("keydown", event => {
+    if (event.key === "Escape" && retentionEditing) { event.preventDefault(); cancelRetentionEdit(); }
+  });
+  $("retentionForm").addEventListener("submit", event => {
+    event.preventDefault();
+    if (!retentionEditing || retentionSaving) return;
+    const form = event.currentTarget;
+    const change = { max_entries: Number($("retentionEntries").value), max_days: Number($("retentionDays").value), max_bytes: Math.round(Number($("retentionMiB").value) * 1048576) };
+    busy(form.querySelector('[type="submit"]'), async () => {
+      retentionSaving = true; retentionLoadRevision++;
+      const controls = [...form.querySelectorAll('input, #cancelRetention')];
+      controls.forEach(control => { control.disabled = true; });
+      form.setAttribute("aria-busy", "true");
+      try {
+        retentionSettings = await api("/telemetry/settings", jsonOptions("PATCH", change));
+        retentionEditing = false;
+        renderRetention();
+        $("editRetention").focus();
+        notify("保留设置已保存");
+      } finally {
+        retentionSaving = false;
+        controls.forEach(control => { control.disabled = false; });
+        form.removeAttribute("aria-busy");
+      }
+      await loadLogs();
+    });
+  });
+  $("clearRequestLogs").addEventListener("click", event => {
+    if (!confirm("清空请求日志及调试明细？历史用量统计会保留。")) return;
+    busy(event.currentTarget, async () => { await api("/logs", { method: "DELETE" }); await loadLogs(); notify("请求与调试明细已清空"); });
+  });
+  $("resetUsage").addEventListener("click", event => {
+    if (!confirm("永久删除全部历史用量统计并开始新的统计周期？保留的旧请求明细不会重新累计。")) return;
+    busy(event.currentTarget, async () => { await api("/stats", { method: "DELETE" }); await loadUsage(); notify("已开始新的统计周期"); });
+  });
   const reloadFirstPage = () => { page = 1; loadLogs().catch(showError); };
   $("logSearch").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(reloadFirstPage, 250); });
   ["logStatus", "logModel", "logKey", "logThinking", "pageSize"].forEach(id => $(id).addEventListener("change", reloadFirstPage));

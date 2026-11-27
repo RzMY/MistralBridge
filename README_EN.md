@@ -23,6 +23,7 @@ Mistral Bridge is a native dynamic-library plugin for CLIProxyAPI (CPA). It adap
 - **Protocol adaptation** converts assistant reasoning fields, Mistral thinking/text content, and streaming deltas, including reasoning in tool-call messages.
 - **Credential management** adds, edits, and tests multiple keys, switches Vibe / Studio request channels, displays both monthly budgets, and configures enabled state and scheduling priority.
 - **Model mappings** fetch the upstream catalog and configure client-facing names and reasoning-effort mappings. Changes to mappings and their enabled state update CPA's model list.
+- **Historical statistics** persist daily UTC aggregates by model and credential independently of request details. Configure detail retention by count, age, and size, and inspect history completeness across upgrades and downgrades. [Storage and compatibility](docs/history-statistics.md)
 - **Request logs** filter by model, result, credential, reasoning effort, and time range, with request counts, tokens, cache hit rate, and generation speed.
 - **Request debugging** captures the true original request before CPA protocol translation, the translated executor input before plugin editing, and the complete upstream request and response. Credentials are redacted. The latest 100 exchanges can be compared in the request log, with the original request imported into the editor preview by default.
 - **Request editing** maps common OpenAI, Responses, Claude, and Gemini parameters through an independent switch enabled by default. Custom rules set, copy, move, or delete body and header fields. A separate automatic cleanup switch removes remaining unsupported fields and shows discarded paths and value summaries in request logs. Includes ordering, individual toggles, JSON Pointer array wildcards, importing saved redacted debug requests, and an offline preview with lossless JSON formatting and collapsible fields. See the [configuration guide (Chinese)](docs/request-edit.md).
@@ -31,9 +32,9 @@ Mistral Bridge is a native dynamic-library plugin for CLIProxyAPI (CPA). It adap
 
 ## Interface Preview
 
-![Request Logs](imgs/logs.png)
 ![Credential Management](imgs/keys.png)
-![Model Mappings](imgs/models.png)
+![Historical Statistics](imgs/statistics.png)
+![Request Logs](imgs/logs.png)
 
 ## Installation and setup
 
@@ -110,13 +111,14 @@ CPA native credential quota is available through the standard plugin quota provi
 | Monthly quota | Displays both Vibe and Studio / API budgets, including remaining allowance, usage percentage, reset time, pay-as-you-go status, and refresh status. The current request channel is highlighted. Keys in the same organization share the corresponding budget. |
 | Unavailable quota | Displays the upstream status or error. A previous result retains its timestamp. Custom API URLs display quota lookup as unavailable. |
 | Request details | Time, request model, upstream model, reasoning effort, result, masked credential, first-token time, total duration, and token usage. |
-
-Studio uses the upstream default billing route; Mistral determines the actual charged pool. Remote checks showed that a Studio-created key can charge Vibe with the Vibe marker, while a Vibe-created key still charged Vibe after removing it. The console displays a note for that configuration and distinguishes the selected channel from a confirmed billing result.
-| Statistics | Apply filters to the most recent 10,000 retained requests, with paginated details. Missing historical fields display `—`. |
+| Statistics | The default history page shows all history, with local-time hourly totals for a single day, with yesterday and custom ranges; the log page shows matching retained details. Missing fields display `—`; unavailable or uncertain history is explicitly marked. |
+| Log retention | Defaults to at most 10,000 entries, 30 days, and 32 MiB, enforced together. Configure these in the log page’s second toolbar row. Clearing details and resetting statistics are separate operations. |
 | Cache hit rate | Cached tokens divided by input tokens across requests that reported cache usage. |
 | Average token speed | Output tokens from successful streaming requests divided by their combined generation time after the first token. Non-streaming requests display `—` for first-token time. |
 
-State is stored at `<auth-dir>/plugin-data/mistral-bridge/state.json`, with request metadata in `requests.jsonl` and debug details in `debug-logs/`. When CPA's `auth-dir` is unavailable, the fallback is `$HOME/.cli-proxy-api/plugin-data/mistral-bridge`. Set `MISTRAL_BRIDGE_DATA_DIR` to use a different directory.
+Studio uses the upstream default billing route; Mistral determines the actual charged pool. Remote checks showed that a Studio-created key can charge Vibe with the Vibe marker, while a Vibe-created key still charged Vibe after removing it. The console displays a note for that configuration and distinguishes the selected channel from a confirmed billing result.
+
+State is stored at `<auth-dir>/plugin-data/mistral-bridge/state.json`, with request metadata in `requests.jsonl`, debug details in `debug-logs/`, and the historical ledger and retention settings in `telemetry/`. When CPA's `auth-dir` is unavailable, the fallback is `$HOME/.cli-proxy-api/plugin-data/mistral-bridge`. Set `MISTRAL_BRIDGE_DATA_DIR` to use a different directory.
 
 `state.json` contains upstream keys. The console displays masked values. Persist the plugin and data directories when using containers. To repeat first-time setup, stop CPA, back up and move this plugin's data directory, then start CPA again.
 

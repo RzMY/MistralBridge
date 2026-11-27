@@ -31,7 +31,7 @@ var hostTransport HostTransport = func(string, []byte) ([]byte, int, error) {
 func Initialize(transport HostTransport) { hostTransport = transport }
 
 // Shutdown releases the plugin's proxy transports.
-func Shutdown() { closeProxyTransport() }
+func Shutdown() { closeTelemetry(); closeProxyTransport() }
 
 func okEnvelope(value any) ([]byte, error) {
 	result, err := json.Marshal(value)

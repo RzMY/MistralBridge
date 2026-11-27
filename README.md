@@ -23,6 +23,7 @@ Mistral Bridge 是 CLIProxyAPI（CPA）的原生动态库插件。它对齐 Mist
 - **协议适配**。转换 assistant 思考字段、Mistral thinking/text 内容及流式增量响应，支持工具调用消息中的思考内容。
 - **凭证管理**。添加、编辑和测试多个 Key，切换 Vibe / Studio 使用渠道，同时查看两个额度池，设置启用状态与调度优先级。
 - **模型映射**。拉取上游目录，自定义客户端模型名和思考强度映射。启用、禁用或修改映射后同步到 CPA 模型列表。
+- **历史统计**。独立保存按 UTC 日期、模型和凭证汇总的累计用量，清理明细不影响历史。支持日志条数、天数及容量设置，并可通过请求数悬停查看升级或降级期间的历史完整性。[统计与升降级说明](docs/history-statistics.md)
 - **请求日志**。按模型、结果、凭证、思考强度和时间范围筛选，汇总请求数、Token、缓存命中率及生成速率。
 - **请求调试**。启用后同步保存协议转换前的真实原始请求、CPA 转换后的执行器输入，以及发往 Mistral 的完整请求与响应。认证信息脱敏，独立保留最近 100 条，可从请求日志对照查看，并将原始请求导入请求编辑预览。
 - **请求编辑**。默认开启的独立开关映射常用 OpenAI、Responses、Claude 和 Gemini 参数。自定义规则可设置、复制、移动或删除请求体与标头字段；默认开启的自动丢弃开关清理剩余不兼容字段，并在日志提示丢弃内容。支持排序、单条启停、JSON Pointer 数组通配符、导入真实脱敏调试请求，以及 JSON 格式化和字段折叠预览。[配置说明](docs/request-edit.md)
@@ -31,9 +32,9 @@ Mistral Bridge 是 CLIProxyAPI（CPA）的原生动态库插件。它对齐 Mist
 
 ## 界面预览
 
-![请求日志](imgs/logs.png)
 ![凭证管理](imgs/keys.png)
-![模型映射](imgs/models.png)
+![历史统计](imgs/statistics.png)
+![请求日志](imgs/logs.png)
 
 ## 安装与配置
 
@@ -109,13 +110,14 @@ Linux 发布包以 Ubuntu 22.04 为构建基线，适用于 glibc 2.35 及以上
 | 月度额度 | 同时展示 Vibe 与 Studio / API 的剩余量、用量比例、重置时间、按量付费与刷新状态，并突出当前请求渠道。同一组织的多个 Key 共享对应额度池。 |
 | 额度不可用 | 显示接口返回的状态或错误；存在历史结果时保留结果与时间。自定义 API 地址显示额度查询不可用。 |
 | 请求明细 | 时间、请求模型、上游模型、思考强度、结果、掩码凭证、首字时间、总耗时与 Token 用量。 |
-
-Studio 渠道使用上游默认计费，最终扣费由 Mistral 判定。远程实测中，Studio 来源 Key 可通过 Vibe 标记改扣 Vibe 池；Vibe 来源 Key 去掉标记后仍扣 Vibe 池。页面在后一种配置下显示提示，不将所选渠道视为已确认的实际扣费池。
-| 统计范围 | 对保留的最近 10,000 条日志按筛选条件统计，分页显示明细。历史缺失字段显示 `—`。 |
+| 统计范围 | 历史统计首页默认展示全部历史总量，并支持昨天及自定义时间范围；日志页展示匹配的保留明细。历史缺失字段显示 `—`，无法恢复或确认完整性的历史会明确提示。 |
+| 日志保留 | 默认最多 10,000 条、30 天、32 MiB，同时满足三项限制；可在请求日志第二行的保留设置中调整。清空明细与重置统计分别操作。 |
 | 缓存命中率 | 已返回缓存用量的请求中，缓存 Token 总量占输入 Token 总量的比例。 |
 | 平均 Token 速率 | 成功流式请求的输出 Token 总量，除以首字后的生成耗时总和。非流式请求的首字时间显示 `—`。 |
 
-状态保存在 `<auth-dir>/plugin-data/mistral-bridge/state.json`，请求元数据保存在同目录的 `requests.jsonl`，调试明细位于 `debug-logs/`。未取得 CPA `auth-dir` 时使用 `$HOME/.cli-proxy-api/plugin-data/mistral-bridge`，也可通过 `MISTRAL_BRIDGE_DATA_DIR` 指定目录。
+Studio 渠道使用上游默认计费，最终扣费由 Mistral 判定。远程实测中，Studio 来源 Key 可通过 Vibe 标记改扣 Vibe 池；Vibe 来源 Key 去掉标记后仍扣 Vibe 池。页面在后一种配置下显示提示，不将所选渠道视为已确认的实际扣费池。
+
+状态保存在 `<auth-dir>/plugin-data/mistral-bridge/state.json`，请求元数据保存在同目录的 `requests.jsonl`，调试明细位于 `debug-logs/`，历史统计账本和保留设置位于 `telemetry/`。未取得 CPA `auth-dir` 时使用 `$HOME/.cli-proxy-api/plugin-data/mistral-bridge`，也可通过 `MISTRAL_BRIDGE_DATA_DIR` 指定目录。
 
 `state.json` 包含上游 Key，页面仅展示掩码。容器部署请持久化插件目录和数据目录。要重新体验首次使用流程，可以停止 CPA 后备份并移走该插件的数据目录，再启动 CPA。
 

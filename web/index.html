@@ -11,34 +11,70 @@
 <div id="app" class="shell hidden">
 <header class="plugin-head"><img class="brand-mark" src="BRIDGE_LOGO_URI" alt="" width="34" height="34"><h1 class="brand-name">Mistral Bridge</h1></header>
 <nav class="plugin-nav" role="tablist" aria-label="插件视图">
-<button id="tab-requests" type="button" role="tab" data-view="requests" aria-controls="page-requests" aria-selected="true"><span class="nav-icon" aria-hidden="true">▤</span>请求日志</button>
+<button id="tab-usage" type="button" role="tab" data-view="usage" aria-controls="page-usage" aria-selected="true"><span class="nav-icon" aria-hidden="true">◷</span>历史统计</button>
+<button id="tab-requests" type="button" role="tab" data-view="requests" aria-controls="page-requests" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">▤</span>请求日志</button>
 <button id="tab-keys" type="button" role="tab" data-view="keys" aria-controls="page-keys" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">⚿</span>凭证管理</button>
 <button id="tab-models" type="button" role="tab" data-view="models" aria-controls="page-models" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">⇄</span>模型映射</button>
 <button id="tab-request-edit" type="button" role="tab" data-view="request-edit" aria-controls="page-request-edit" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">✎</span>请求编辑</button>
 <button id="tab-proxy" type="button" role="tab" data-view="proxy" aria-controls="page-proxy" aria-selected="false" tabindex="-1"><span class="nav-icon" aria-hidden="true">↗</span>代理设置</button>
 </nav>
 <div id="pageError" class="notice hidden" role="alert"></div>
-<section id="page-requests" data-page="requests" role="tabpanel" aria-labelledby="tab-requests">
+<section id="page-usage" data-page="usage" role="tabpanel" aria-labelledby="tab-usage">
 <div class="panel">
-<div class="toolbar">
+<div class="toolbar usage-toolbar">
+<label>日期 <select id="usageRange" aria-label="历史统计日期范围"><option value="all" selected>全部历史</option><option value="today">今天</option><option value="yesterday">昨天</option><option value="7d">近 7 个自然日</option><option value="30d">近 30 个自然日</option><option value="custom">自定义日期</option></select></label>
+<select id="usageModel" aria-label="历史请求模型"><option value="">全部请求模型</option></select>
+<select id="usageUpstream" aria-label="历史上游模型"><option value="">全部上游模型</option></select>
+<select id="usageKey" aria-label="历史凭证"><option value="">全部凭证</option></select>
+<select id="usageThinking" aria-label="历史思考强度"><option value="">全部思考强度</option><option>none</option><option>minimal</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option></select>
+<button class="btn" id="refreshUsage" type="button">↻ 刷新</button>
+<button class="btn btn-danger" id="resetUsage" type="button">清空历史统计</button>
+</div>
+<div id="usageCustom" class="custom-range hidden"><label>从 <input id="usageFrom" type="datetime-local"></label><label>至 <input id="usageTo" type="datetime-local"></label><button id="applyUsageRange" class="btn" type="button">应用</button></div>
+<div class="stats">
+<div class="stat"><div class="stat-label">请求数</div><div class="stat-value" id="usageRequests">—</div></div>
+<div class="stat"><div class="stat-label">总 Token</div><div class="stat-value" id="usageTokens">—</div></div>
+<div class="stat"><div class="stat-label">缓存命中率</div><div class="stat-value" id="usageCache">—</div><div class="stat-detail" id="usageCacheSamples"></div></div>
+<div class="stat"><div class="stat-label">平均生成速率</div><div class="stat-value" id="usageSpeed">—</div><div class="stat-detail" id="usageSpeedSamples"></div></div>
+</div>
+<div class="usage-charts">
+<figure class="usage-chart"><figcaption><h3>请求趋势</h3></figcaption><div id="requestChart" class="chart-plot"></div></figure>
+<figure class="usage-chart"><figcaption><h3 id="tokenChartHeading">分时 Token</h3></figcaption><div id="tokenChart" class="chart-plot"></div></figure>
+</div>
+<div class="table-wrap"><table><thead><tr><th id="usageTimeHeading">时间</th><th>请求数</th><th>总 Token</th><th>缓存命中率</th><th>Token 速率</th><th>平均首字</th><th>平均耗时</th></tr></thead><tbody id="usageDays"></tbody></table></div>
+</div>
+</section>
+<section id="page-requests" data-page="requests" role="tabpanel" aria-labelledby="tab-requests" hidden>
+<div class="panel">
+<div class="toolbar log-toolbar">
 <input class="search" id="logSearch" type="search" aria-label="搜索请求日志" placeholder="搜索模型、凭证、错误或丢弃字段">
 <select id="logStatus" aria-label="筛选结果"><option value="">全部结果</option><option value="ok">成功</option><option value="error">失败</option></select>
 <select id="logModel" aria-label="筛选请求模型"><option value="">全部模型</option></select>
 <select id="logKey" aria-label="筛选凭证"><option value="">全部凭证</option></select>
 <select id="logThinking" aria-label="筛选思考强度"><option value="">全部思考强度</option><option>none</option><option>minimal</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option></select>
-<button class="btn" type="button" id="refreshLogs">↻ 刷新</button><span class="count" id="logCount">0 条</span>
+<span class="count" id="logCount">0 条</span>
+<div class="log-toolbar-actions">
+<button class="btn" type="button" id="refreshLogs">↻ 刷新</button>
 </div>
-<div class="range-row">
+</div>
+<div class="range-row log-options-row">
 <div class="segments" aria-label="时间范围"><button type="button" data-range="all" aria-pressed="true">全部</button><button type="button" data-range="today" aria-pressed="false">今天</button><button type="button" data-range="24h" aria-pressed="false">24 小时</button><button type="button" data-range="7d" aria-pressed="false">近 7 天</button><button type="button" data-range="30d" aria-pressed="false">近 30 天</button><button type="button" data-range="custom" aria-pressed="false">自定义</button></div>
-<div class="debug-controls"><div class="debug-mode-group"><button class="switch" id="debugModeToggle" role="switch" aria-checked="false" type="button"><span class="switch-track"></span><span>调试模式</span></button></div><button class="btn small" id="clearDebugLogs" type="button">清理调试数据</button></div>
+<div class="debug-controls">
+<form id="retentionForm" class="retention-inline" aria-label="日志保留设置">
+<div id="retentionDisplay" class="retention-display"><span class="retention-label">保留</span><span id="retentionSummary" aria-live="polite">加载中…</span></div>
+<button class="btn" id="editRetention" type="button" aria-controls="retentionEditor" aria-expanded="false" disabled>编辑</button>
+<div id="retentionEditor" class="retention-editor" hidden>
+<span class="retention-label">保留</span><label><input id="retentionEntries" aria-label="最多条数" type="number" min="1" max="10000" required>条</label>
+<label><input id="retentionDays" aria-label="最多天数" type="number" min="1" max="3650" required>天</label>
+<label><input id="retentionMiB" aria-label="最大容量 MiB" type="number" min="1" max="256" step="any" required>MiB</label>
+<button class="btn btn-primary" type="submit">保存</button><button class="btn" id="cancelRetention" type="button">取消</button>
+</div>
+</form>
+<button class="btn" id="clearRequestLogs" type="button">清空请求记录</button>
+<div class="debug-mode-group"><button class="switch" id="debugModeToggle" role="switch" aria-checked="false" type="button"><span class="switch-track"></span><span>调试模式</span></button></div><button class="btn" id="clearDebugLogs" type="button">清理调试数据</button></div>
+
+</div>
 <div id="customRange" class="custom-range hidden"><label for="rangeFrom">从</label><input id="rangeFrom" type="datetime-local"><label for="rangeTo">至</label><input id="rangeTo" type="datetime-local"><button id="applyRange" class="btn small" type="button">应用</button></div>
-</div>
-<div class="stats">
-<div class="stat"><div class="stat-label">总请求数</div><div class="stat-value" id="statRequests">0</div></div>
-<div class="stat"><div class="stat-label">总 Token</div><div class="stat-value" id="statTokens">0</div><div class="stat-detail" id="statUsage">输入 0 · 输出 0 · 缓存 —</div></div>
-<div class="stat" title="上游已返回缓存用量的请求中，缓存 Token 占输入 Token 的比例"><div class="stat-label">缓存命中率</div><div class="stat-value" id="statCache">—</div><div class="stat-detail" id="cacheSamples"></div></div>
-<div class="stat" title="成功流式请求的输出 Token 总数 ÷ 首字后生成耗时总和"><div class="stat-label">平均 Token 速率</div><div class="stat-value" id="statSpeed">—</div><div class="stat-detail" id="speedSamples"></div></div>
-</div>
 </div>
 <div class="table-wrap"><table class="log-table"><thead><tr><th>时间</th><th>请求模型</th><th>上游模型</th><th>思考强度</th><th>结果</th><th>凭证</th><th>首字</th><th>耗时</th><th>用量</th><th>调试</th></tr></thead><tbody id="logRows"></tbody></table></div>
 <div class="pager"><span class="retention" id="logRetention"></span><select id="pageSize" aria-label="每页条数"><option value="25">25 条 / 页</option><option value="50" selected>50 条 / 页</option><option value="100">100 条 / 页</option></select><button type="button" class="btn" id="prevPage">‹ 上一页</button><span id="pageInfo">第 1 页，共 1 页</span><button type="button" class="btn" id="nextPage">下一页 ›</button></div>
@@ -127,6 +163,7 @@
 <dialog id="debugDialog" class="debug-dialog"><div class="dialog-head"><div><h2>请求调试明细</h2><div class="sub" id="debugSummary"></div></div><button type="button" class="x-button" data-close="debugDialog" aria-label="关闭">×</button></div><div class="debug-dialog-body"><div class="debug-dialog-toolbar"><div class="segments"><button type="button" data-debug-pane="original_request" aria-pressed="true">原始请求</button><button type="button" data-debug-pane="executor_request" aria-pressed="false">执行器输入</button><button type="button" data-debug-pane="request" aria-pressed="false">上游请求</button><button type="button" data-debug-pane="response" aria-pressed="false">上游响应</button></div><div class="actions"><button class="btn small" id="importOpenDebug" type="button">导入原始请求预览</button><button class="btn small" id="copyDebug" type="button">复制内容</button></div></div><pre id="debugOutput" class="debug-output" tabindex="0"></pre></div></dialog>
 <div class="toast hidden" id="toast" role="status"></div>
 <script>/* BRIDGE_JSON_SCRIPT */</script>
-<script>/* BRIDGE_SCRIPT */</script>
+<script>/* BRIDGE_CHART_SCRIPT */
+/* BRIDGE_SCRIPT */</script>
 </body>
 </html>
