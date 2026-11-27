@@ -1,4 +1,4 @@
-package main
+package bridge
 
 import (
 	"encoding/json"
@@ -207,7 +207,7 @@ func TestNativeErrorEnvelope(t *testing.T) {
 		{&statusError{501, "unsupported"}, "not_implemented", 501, 0},
 	} {
 		var env envelope
-		_ = json.Unmarshal(executorErrorEnvelope(test.err), &env)
+		_ = json.Unmarshal(ExecutorErrorEnvelope(test.err), &env)
 		if !reflect.DeepEqual([]any{env.Error.Code, env.Error.HTTPStatus, env.Error.RetryAfterSeconds}, []any{test.code, test.status, test.wait}) {
 			t.Fatalf("error envelope %+v", env.Error)
 		}

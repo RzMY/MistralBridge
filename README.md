@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="logo.png" alt="Mistral Bridge" width="96" height="96">
+<img src="web/logo.png" alt="Mistral Bridge" width="96" height="96">
 
 # Mistral Bridge
 
@@ -123,6 +123,20 @@ Studio 渠道使用上游默认计费，最终扣费由 Mistral 判定。远程�
 
 插件内置下载页面中的 23 个模型 TPM/RPS 限额，预算不足及上游 429 会反馈给 CPA 原生冷却与回退。普通和流式请求均适用。[限额、调度与测试说明](docs/rate-limits.md)
 
+## 源码结构
+
+```text
+cmd/mistral-bridge/    动态库入口、C ABI 导出与宿主回调适配
+internal/bridge/       插件业务逻辑及同包 Go 测试
+internal/bridge/data/  编译时内嵌的模型限额与请求字段定义
+web/                  控制台前端、图标及 Go embed 资源入口
+docs/                 技术设计与功能说明
+scripts/              构建发布工具、集成检查与资源更新脚本
+imgs/                 README 展示截图
+```
+
+Go 测试与对应实现放在同一目录。`build/`、`dist/` 和 `archives/` 用于本地构建产物及归档，已由 Git 忽略。构建动态库时指定 `./cmd/mistral-bridge`；测试和静态检查从仓库根目录运行。
+
 ## 从源码构建
 
 使用 Go 1.26.11 和目标平台的 C 编译器。在 Linux amd64 环境中执行以下命令。
@@ -130,8 +144,8 @@ Studio 渠道使用上游默认计费，最终扣费由 Mistral 判定。远程�
 ```sh
 CGO_ENABLED=1 GOAMD64=v1 CGO_CFLAGS="-O2 -g -march=x86-64" \
   go build -trimpath -buildvcs=false -buildmode=c-shared \
-  -ldflags="-s -w -X main.pluginVersion=0.2.1" \
-  -o build/mistral-bridge.so .
+  -ldflags="-s -w -X github.com/RzMY/MistralBridge/internal/bridge.pluginVersion=0.2.1" \
+  -o build/mistral-bridge.so ./cmd/mistral-bridge
 ```
 
 其他平台采用原生 runner 构建，CPU 基线为 amd64 v1 或 ARMv8.0。测试与打包命令在发布工作流中维护。[构建工作流](.github/workflows/build.yml)

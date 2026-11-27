@@ -1,10 +1,9 @@
-package main
+package bridge
 
 import (
 	"bufio"
 	"crypto/rand"
 	"crypto/sha256"
-	"embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/RzMY/MistralBridge/web"
 )
 
 const (
@@ -28,19 +29,13 @@ const (
 // Release builds set this to the tag version with -ldflags -X.
 var pluginVersion = "0.5.0"
 
-//go:embed web/index.html web/style.css web/json.js web/app.js
-var webFiles embed.FS
-
-//go:embed logo.png
-var pluginLogo []byte
-
-var pluginLogoURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(pluginLogo)
+var pluginLogoURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(web.Logo)
 
 var consolePage = func() []byte {
-	page, _ := webFiles.ReadFile("web/index.html")
-	css, _ := webFiles.ReadFile("web/style.css")
-	script, _ := webFiles.ReadFile("web/app.js")
-	jsonScript, _ := webFiles.ReadFile("web/json.js")
+	page, _ := web.Files.ReadFile("index.html")
+	css, _ := web.Files.ReadFile("style.css")
+	script, _ := web.Files.ReadFile("app.js")
+	jsonScript, _ := web.Files.ReadFile("json.js")
 	html := strings.Replace(string(page), "/* BRIDGE_STYLES */", string(css), 1)
 	html = strings.ReplaceAll(html, "BRIDGE_LOGO_URI", pluginLogoURI)
 	html = strings.Replace(html, "/* BRIDGE_JSON_SCRIPT */", string(jsonScript), 1)
@@ -153,7 +148,8 @@ var (
 	hostCall          = callHost
 )
 
-func handleMethod(method string, raw []byte) ([]byte, error) {
+// HandleMethod dispatches a host RPC request and returns its encoded response.
+func HandleMethod(method string, raw []byte) ([]byte, error) {
 	switch method {
 	case "plugin.register", "plugin.reconfigure":
 		return registration()

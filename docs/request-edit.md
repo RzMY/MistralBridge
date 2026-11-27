@@ -37,7 +37,7 @@
 
 丢弃内容中的密钥类字段、当前上游 Key 和输入认证标头值会脱敏。每条日志最多保留 64 项明细、每个值最多约 2 KiB，整体摘要约 16 KiB；超限时保留实际总数并标记截断或未展示数量。长文本按 UTF-8 边界截断，整数值按原精度显示。
 
-字段定义来自 [Mistral 官方 OpenAPI](https://docs.mistral.ai/openapi.yaml)，作为 `request_schema.json` 编译进插件，请求处理时不联网。维护者可安装 PyYAML 后运行 `python scripts/update_request_schema.py` 更新字段投影；文件记录来源、读取日期和原始 schema 的 SHA-256。
+字段定义来自 [Mistral 官方 OpenAPI](https://docs.mistral.ai/openapi.yaml)，作为 `internal/bridge/data/request_schema.json` 编译进插件，请求处理时不联网。维护者可安装 PyYAML 后运行 `python scripts/update_request_schema.py` 更新字段投影；文件记录来源、读取日期和原始 schema 的 SHA-256。
 
 ## 自定义规则
 

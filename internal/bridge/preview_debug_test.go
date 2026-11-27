@@ -1,4 +1,4 @@
-package main
+package bridge
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ import (
 func previewDebugAPI(t *testing.T, path string, query url.Values) managementResponse {
 	t.Helper()
 	raw, _ := json.Marshal(managementRequest{Method: "GET", Path: "/plugins/mistral-bridge/request-edit/" + path, Query: query})
-	result, err := handleMethod("management.handle", raw)
+	result, err := HandleMethod("management.handle", raw)
 	if err != nil {
 		t.Fatal(err)
 	}

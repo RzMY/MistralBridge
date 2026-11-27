@@ -29,25 +29,13 @@ static void free_host_buffer(void* ptr, size_t len) {
 import "C"
 
 import (
-	"encoding/json"
 	"fmt"
 	"unsafe"
+
+	"github.com/RzMY/MistralBridge/internal/bridge"
 )
 
 const abiVersion = 1
-
-type envelope struct {
-	OK     bool            `json:"ok"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *rpcError       `json:"error,omitempty"`
-}
-
-type rpcError struct {
-	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
-	Code              string `json:"code"`
-	Message           string `json:"message"`
-	HTTPStatus        int    `json:"http_status,omitempty"`
-}
 
 func main() {}
 
@@ -57,6 +45,7 @@ func cliproxy_plugin_init(host *C.cliproxy_host_api, plugin *C.cliproxy_plugin_a
 		return 1
 	}
 	C.store_host_api(host)
+	bridge.Initialize(callHost)
 	plugin.abi_version = C.uint32_t(abiVersion)
 	plugin.call = C.cliproxy_plugin_call_fn(C.cliproxyPluginCall)
 	plugin.free_buffer = C.cliproxy_plugin_free_fn(C.cliproxyPluginFree)
@@ -71,16 +60,16 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 		response.len = 0
 	}
 	if method == nil {
-		writeResponse(response, errorEnvelope("invalid_method", "method is required", 400))
+		writeResponse(response, bridge.ErrorEnvelope("invalid_method", "method is required", 400))
 		return 1
 	}
 	var requestBytes []byte
 	if request != nil && requestLen > 0 {
 		requestBytes = C.GoBytes(unsafe.Pointer(request), C.int(requestLen))
 	}
-	raw, err := handleMethod(C.GoString(method), requestBytes)
+	raw, err := bridge.HandleMethod(C.GoString(method), requestBytes)
 	if err != nil {
-		writeResponse(response, executorErrorEnvelope(err))
+		writeResponse(response, bridge.ExecutorErrorEnvelope(err))
 		return 1
 	}
 	writeResponse(response, raw)
@@ -95,20 +84,7 @@ func cliproxyPluginFree(ptr unsafe.Pointer, _ C.size_t) {
 }
 
 //export cliproxyPluginShutdown
-func cliproxyPluginShutdown() { closeProxyTransport() }
-
-func okEnvelope(value any) ([]byte, error) {
-	result, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("encode plugin response: %w", err)
-	}
-	return json.Marshal(envelope{OK: true, Result: result})
-}
-
-func errorEnvelope(code, message string, status int) []byte {
-	raw, _ := json.Marshal(envelope{OK: false, Error: &rpcError{Code: code, Message: message, HTTPStatus: status}})
-	return raw
-}
+func cliproxyPluginShutdown() { bridge.Shutdown() }
 
 func writeResponse(response *C.cliproxy_buffer, raw []byte) {
 	if response == nil || len(raw) == 0 {
@@ -122,11 +98,7 @@ func writeResponse(response *C.cliproxy_buffer, raw []byte) {
 	response.len = C.size_t(len(raw))
 }
 
-func callHost(method string, payload any) (json.RawMessage, error) {
-	request, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("encode host request: %w", err)
-	}
+func callHost(method string, request []byte) ([]byte, int, error) {
 	cMethod := C.CString(method)
 	defer C.free(unsafe.Pointer(cMethod))
 	var response C.cliproxy_buffer
@@ -134,7 +106,7 @@ func callHost(method string, payload any) (json.RawMessage, error) {
 	if len(request) > 0 {
 		buffer := C.CBytes(request)
 		if buffer == nil {
-			return nil, fmt.Errorf("allocate host request")
+			return nil, 1, fmt.Errorf("allocate host request")
 		}
 		defer C.free(buffer)
 		requestPtr = (*C.uint8_t)(buffer)
@@ -147,21 +119,5 @@ func callHost(method string, payload any) (json.RawMessage, error) {
 	if response.ptr != nil {
 		C.free_host_buffer(response.ptr, response.len)
 	}
-	if len(raw) == 0 {
-		return nil, fmt.Errorf("host callback %s returned no response (code %d)", method, int(callCode))
-	}
-	var result envelope
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, fmt.Errorf("decode host callback %s: %w", method, err)
-	}
-	if !result.OK {
-		if result.Error != nil {
-			return nil, fmt.Errorf("host callback %s: %s", method, result.Error.Message)
-		}
-		return nil, fmt.Errorf("host callback %s failed", method)
-	}
-	if callCode != 0 {
-		return nil, fmt.Errorf("host callback %s returned code %d", method, int(callCode))
-	}
-	return append(json.RawMessage(nil), result.Result...), nil
+	return raw, int(callCode), nil
 }

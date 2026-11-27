@@ -6,7 +6,7 @@
 
 Mistral Bridge 是 CLIProxyAPI（CPA）的原生 Go 动态库插件。CPA 负责接收客户端 HTTP 请求、管理 API 鉴权、执行模型路由，以及提供带 CPA 网络代理配置的 HTTP 回调。插件负责凭证和映射状态、Mistral 请求转换、响应规范化、用量统计和管理页面。
 
-插件通过 CPA 提供的 C ABI v1 和 JSON RPC 方法与宿主通信。未配置独立代理时，网络请求使用 `host.http.do` 或 `host.http.do_stream`，沿用 CPA 的 HTTP 出口策略。配置独立代理后，由 [proxy.go](../proxy.go) 使用 Go HTTP Transport 发送请求，显式覆盖环境代理，支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。该路径保留插件日志和调试捕获，但不经过 CPA 的 HTTP 回调日志。主要入口位于 [main.go](../main.go)、[plugin.go](../plugin.go) 和 [mistral.go](../mistral.go)。
+插件通过 CPA 提供的 C ABI v1 和 JSON RPC 方法与宿主通信。未配置独立代理时，网络请求使用 `host.http.do` 或 `host.http.do_stream`，沿用 CPA 的 HTTP 出口策略。配置独立代理后，由 [proxy.go](../internal/bridge/proxy.go) 使用 Go HTTP Transport 发送请求，显式覆盖环境代理，支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。该路径保留插件日志和调试捕获，但不经过 CPA 的 HTTP 回调日志。主要入口位于 [main.go](../cmd/mistral-bridge/main.go)、[plugin.go](../internal/bridge/plugin.go) 和 [mistral.go](../internal/bridge/mistral.go)。
 
 控制台 HTML、CSS、JavaScript 和图标通过 Go `embed` 编译进动态库。面板内打开时复用同源 CPA / CPAMP 管理会话；直接打开控制台时显示管理密钥连接入口。
 
@@ -30,7 +30,7 @@ flowchart LR
 
 ## 插件生命周期
 
-`main.go` 导出 `cliproxy_plugin_init`、`cliproxyPluginCall`、`cliproxyPluginFree` 和 `cliproxyPluginShutdown`。初始化时注册 ABI 版本 1 和宿主回调函数。每个 RPC 请求通过 `handleMethod` 分派，响应包装为 `{ "ok": true, "result": ... }` 或包含 HTTP 状态的错误对象。
+`cmd/mistral-bridge/main.go` 导出 `cliproxy_plugin_init`、`cliproxyPluginCall`、`cliproxyPluginFree` 和 `cliproxyPluginShutdown`。初始化时注册 ABI 版本 1 和宿主回调函数。每个 RPC 请求通过 `internal/bridge.HandleMethod` 分派，响应包装为 `{ "ok": true, "result": ... }` 或包含 HTTP 状态的错误对象。
 
 `plugin.register` 返回 schema version 10、插件元数据和能力声明。当前声明的主要能力如下。
 
@@ -68,7 +68,7 @@ flowchart LR
 
 执行器只处理 OpenAI Chat Completions 格式。`request_edit.go` 提供输入标头与请求体的编辑模块，配置保存在 `state.json` 的 `request_edit` 中；旧状态和首次安装默认开启内置映射及 `auto_drop_incompatible`，自定义规则为空。普通和流式请求通过 `prepareCompletionRequest` 使用同一配置快照，先执行内置映射、再顺序执行自定义规则，然后清理剩余不兼容字段，最后应用模型、思考映射、使用渠道、凭证与请求模式。详细字段对照和规则 API 见[请求编辑说明](request-edit.md)。
 
-`request_filter.go` 使用编译进动态库的 `request_schema.json` 字段投影清理明确禁止额外属性的对象，按 discriminator 选择已知消息、内容块和工具类型。开放对象和不明确的分支保持原内容，不将字段清理当作值校验。投影由 `scripts/update_request_schema.py` 从官方 OpenAPI 生成，不引入运行时依赖。`auto_drop_incompatible` 缺省或 `null` 时按开启处理，显式 `false` 持久化后重载保持关闭。
+`request_filter.go` 使用编译进动态库的 `internal/bridge/data/request_schema.json` 字段投影清理明确禁止额外属性的对象，按 discriminator 选择已知消息、内容块和工具类型。开放对象和不明确的分支保持原内容，不将字段清理当作值校验。投影由 `scripts/update_request_schema.py` 从官方 OpenAPI 生成，不引入运行时依赖。`auto_drop_incompatible` 缺省或 `null` 时按开启处理，显式 `false` 持久化后重载保持关闭。
 
 自动清理生成 `dropped_count` 和 `dropped_fields`，通过请求 trace 写入普通日志，即使调试模式关闭也保留。明细记录 JSON Pointer 路径、原因和值摘要；认证内容先脱敏，再按数量和字节限制截断。查询支持路径和值搜索，预览返回同一清理报告。原始请求、完整提示词不因该功能整体写入普通日志。
 

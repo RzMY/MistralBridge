@@ -1,6 +1,6 @@
 # 模型限额与冷却
 
-限额表位于 `rate_limits.json`，编译时内嵌，来源为 `docs/Rate limits - Admin - Mistral.html`（2026-11-25 下载的 EU 账号页面）。这是该页面的账号限额快照，并非所有 Mistral 套餐的统一限额。
+限额表位于 `internal/bridge/data/rate_limits.json`，编译时内嵌，来源为 `docs/Rate limits - Admin - Mistral.html`（2026-11-25 下载的 EU 账号页面）。这是该页面的账号限额快照，并非所有 Mistral 套餐的统一限额。
 
 ## CPA 原生调度
 

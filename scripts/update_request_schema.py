@@ -56,7 +56,7 @@ def main():
         "root": "ChatCompletionRequest",
         "schemas": projected,
     }
-    path = Path(__file__).resolve().parent.parent / "request_schema.json"
+    path = Path(__file__).resolve().parent.parent / "internal" / "bridge" / "data" / "request_schema.json"
     path.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Updated {path.name}: {len(projected)} schema definitions")
 

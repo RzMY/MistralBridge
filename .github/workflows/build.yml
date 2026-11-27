@@ -34,7 +34,7 @@ jobs:
         run: python3 scripts/artifacts.py metadata
       - name: Check Go formatting
         run: |
-          unformatted="$(gofmt -l ./*.go)"
+          unformatted="$(gofmt -l cmd internal web)"
           if [ -n "$unformatted" ]; then
             printf 'Run gofmt on these files:\n%s\n' "$unformatted"
             exit 1
@@ -117,8 +117,8 @@ jobs:
         run: |
           mkdir -p build
           go build -trimpath -buildvcs=false -buildmode=c-shared \
-            -ldflags="-s -w -X main.pluginVersion=$BUILD_VERSION" \
-            -o "build/$PLUGIN_LIBRARY" .
+            -ldflags="-s -w -X github.com/RzMY/MistralBridge/internal/bridge.pluginVersion=$BUILD_VERSION" \
+            -o "build/$PLUGIN_LIBRARY" ./cmd/mistral-bridge
       - name: Load plugin and verify C ABI and version
         run: '"$PYTHON" scripts/check_plugin.py "build/$PLUGIN_LIBRARY" "$BUILD_VERSION"'
       - name: Package plugin for the store

@@ -1,4 +1,4 @@
-package main
+package bridge
 
 import (
 	"crypto/sha256"
@@ -18,7 +18,7 @@ import (
 // These are the downloaded account's limits, not universal Mistral plan limits.
 // Match upstream IDs exactly: a moving -latest alias must not be guessed.
 //
-//go:embed rate_limits.json
+//go:embed data/rate_limits.json
 var rateLimitsJSON []byte
 
 type modelRateLimit struct {

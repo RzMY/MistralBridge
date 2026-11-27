@@ -1,4 +1,4 @@
-package main
+package bridge
 
 import (
 	_ "embed"
@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 )
 
-//go:embed request_schema.json
+//go:embed data/request_schema.json
 var requestSchemaJSON []byte
 
 type requestFieldSchema struct {

@@ -1,4 +1,4 @@
-package main
+package bridge
 
 import (
 	"encoding/json"
@@ -29,7 +29,7 @@ func isolatedState(t *testing.T) {
 func managementCall(t *testing.T, method, path, body string) managementResponse {
 	t.Helper()
 	raw, _ := json.Marshal(managementRequest{Method: method, Path: "/plugins/mistral-bridge" + path, Body: []byte(body)})
-	reply, err := handleMethod("management.handle", raw)
+	reply, err := HandleMethod("management.handle", raw)
 	if err != nil {
 		t.Fatal(err)
 	}

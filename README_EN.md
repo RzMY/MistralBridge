@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="logo.png" alt="Mistral Bridge" width="96" height="96">
+<img src="web/logo.png" alt="Mistral Bridge" width="96" height="96">
 
 # Mistral Bridge
 
@@ -126,6 +126,20 @@ Each key is automatically registered as a native CPA credential. CPA owns creden
 
 The plugin embeds TPM/RPS limits for 23 models from the downloaded account snapshot. Admission limits and upstream 429 responses feed CPA native cooldown and failover for both normal and streaming requests. See [rate limits and testing](docs/rate-limits.md).
 
+## Source layout
+
+```text
+cmd/mistral-bridge/    Shared-library entry point, C ABI exports and host adapter
+internal/bridge/       Plugin logic and Go tests alongside their implementation
+internal/bridge/data/  Embedded model limits and request field definitions
+web/                  Console frontend, logo and Go embed entry point
+docs/                 Technical design and feature documentation
+scripts/              Release tooling, integration checks and resource generators
+imgs/                 README screenshots
+```
+
+`build/`, `dist/` and `archives/` hold local artifacts and are ignored by Git. Build the shared library from `./cmd/mistral-bridge`; run tests and static checks from the repository root.
+
 ## Build from source
 
 Use Go 1.26.11 and a C compiler for the target platform. On Linux amd64, run the following command.
@@ -133,8 +147,8 @@ Use Go 1.26.11 and a C compiler for the target platform. On Linux amd64, run the
 ```sh
 CGO_ENABLED=1 GOAMD64=v1 CGO_CFLAGS="-O2 -g -march=x86-64" \
   go build -trimpath -buildvcs=false -buildmode=c-shared \
-  -ldflags="-s -w -X main.pluginVersion=0.2.1" \
-  -o build/mistral-bridge.so .
+  -ldflags="-s -w -X github.com/RzMY/MistralBridge/internal/bridge.pluginVersion=0.2.1" \
+  -o build/mistral-bridge.so ./cmd/mistral-bridge
 ```
 
 Other platforms build on native runners. CPU baselines are amd64 v1 and ARMv8.0. The workflow contains the test and packaging commands. [Build workflow](.github/workflows/build.yml)

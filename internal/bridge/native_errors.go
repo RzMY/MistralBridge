@@ -1,4 +1,4 @@
-package main
+package bridge
 
 import (
 	"context"
@@ -44,7 +44,8 @@ func nativeUpstreamError(status int, headers http.Header, body []byte) error {
 	return &providerError{err, code, seconds}
 }
 
-func executorErrorEnvelope(err error) []byte {
+// ExecutorErrorEnvelope preserves status, cooldown and error scope in the RPC response.
+func ExecutorErrorEnvelope(err error) []byte {
 	detail := rpcError{Code: "mistral_bridge_error", Message: err.Error(), HTTPStatus: 500}
 	var status *statusError
 	if errors.As(err, &status) {

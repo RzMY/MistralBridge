@@ -1,4 +1,4 @@
-package main
+package bridge
 
 import (
 	"encoding/json"
@@ -39,15 +39,15 @@ func TestNativeQuotaDiscovery(t *testing.T) {
 	if err != nil || !strings.Contains(string(raw), `"quota_provider":true`) {
 		t.Fatal("quota provider not registered")
 	}
-	raw, err = handleMethod("quota.identifier", nil)
+	raw, err = HandleMethod("quota.identifier", nil)
 	if err != nil || !strings.Contains(string(raw), pluginID) {
 		t.Fatal("identifier missing")
 	}
-	raw, err = handleMethod("quota.describe", nil)
+	raw, err = HandleMethod("quota.describe", nil)
 	if err != nil || !strings.Contains(string(raw), `"supports_reset":false`) {
 		t.Fatal("reset capability incorrect")
 	}
-	raw, err = handleMethod("quota.reset", nil)
+	raw, err = HandleMethod("quota.reset", nil)
 	if err != nil || !strings.Contains(string(raw), `"success":false`) {
 		t.Fatal("upstream reset falsely supported")
 	}
